@@ -1,0 +1,10 @@
+{
+  "enchantment.everything_morph.morph": "変身",
+  "enchantment.everything_morph.morph.desc": "使用時にカスタムエンティティに変身する能力を与えます。",
+  "itemGroup.everything_morph.morph_tab": "万物化形",
+  "enchantment.everything_morph.fly_sword": "Flying Sword",
+  "enchantment.everything_morph.fly_sword.desc": "Summons a flying sword that you can ride when used.",
+  "key.everything_morph.fly_sword_down": "Descend",
+  "key.everything_morph.fly_sword_attack": "Shoot Sword Beam",
+  "key.categories.everything_morph": "Everything Morph"
+}

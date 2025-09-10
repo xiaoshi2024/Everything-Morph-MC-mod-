@@ -1,0 +1,22 @@
+{
+  "enchantment.everything_morph.morph": "Morph",
+  "enchantment.everything_morph.morph.desc": "Grants the ability to morph into a custom entity when used.",
+  "enchantment.everything_morph.fly_sword": "Flying Sword",
+  "enchantment.everything_morph.fly_sword.desc": "Summons a flying sword that you can ride when used.",
+  "key.everything_morph.fly_sword_down": "Descend",
+  "key.everything_morph.fly_sword_attack": "Shoot Sword Beam",
+  "key.categories.everything_morph": "Everything Morph",
+  "itemGroup.everything_morph.morph_tab": "Everything Morph",
+
+  "config.everything_morph.enable_skin_cache": "Enable Skin Cache",
+  "config.everything_morph.skin_cache_size": "Skin Cache Size (MB)",
+  "config.everything_morph.skin_download_timeout": "Skin Download Timeout (seconds)",
+  "config.everything_morph.skin_retry_count": "Skin Retry Count",
+  "config.everything_morph.skin_retry_delay": "Skin Retry Delay (ms)",
+
+  "config.everything_morph.enable_skin_cache.tooltip": "Enable skin caching for better performance",
+  "config.everything_morph.skin_cache_size.tooltip": "Maximum skin cache size in MB (0 means unlimited)",
+  "config.everything_morph.skin_download_timeout.tooltip": "Skin download timeout in seconds",
+  "config.everything_morph.skin_retry_count.tooltip": "Number of retries for skin loading",
+  "config.everything_morph.skin_retry_delay.tooltip": "Skin loading retry delay in milliseconds"
+}

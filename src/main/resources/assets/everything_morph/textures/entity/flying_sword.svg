@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+  <!-- 透明背景 -->
+  <rect width="64" height="64" fill="transparent"/>
+  
+  <!-- 简单的剑形图案 -->
+  <path d="M32 8 L36 8 L36 56 L34 58 L30 58 L28 56 L28 8 Z" fill="none" stroke="#AAAAAA" stroke-width="1"/>
+  <path d="M31 8 L33 8 L33 20 L31 20 Z" fill="#C0C0C0"/>
+  <path d="M32 20 L35 25 L32 50 L29 25 Z" fill="#E0E0E0"/>
+</svg>
