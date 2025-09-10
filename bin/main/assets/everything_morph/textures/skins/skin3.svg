@@ -1,0 +1,6 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- 简单的皮肤纹理示例3 -->
+  <rect width="64" height="64" fill="#dda0dd"/>
+  <rect x="20" y="10" width="24" height="30" fill="#9370db"/>
+  <rect x="20" y="40" width="24" height="24" fill="#483d8b"/>
+</svg>

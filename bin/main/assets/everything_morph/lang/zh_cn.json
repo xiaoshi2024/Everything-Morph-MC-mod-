@@ -1,0 +1,10 @@
+{
+  "enchantment.everything_morph.morph": "化形",
+  "enchantment.everything_morph.morph.desc": "使用时可以化形为自定义实体。",
+  "enchantment.everything_morph.fly_sword": "御剑飞行",
+  "enchantment.everything_morph.fly_sword.desc": "使用时可以召唤飞行剑并骑乘飞行。",
+  "key.everything_morph.fly_sword_down": "下降",
+  "key.everything_morph.fly_sword_attack": "发射剑气",
+  "key.categories.everything_morph": "万物化形",
+  "itemGroup.everything_morph.morph_tab": "万物化形"
+}
