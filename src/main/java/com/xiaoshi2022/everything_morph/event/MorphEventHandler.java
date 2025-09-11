@@ -76,6 +76,7 @@ public class MorphEventHandler {
             try {
                 WeaponMorphEntity morphEntity = EverythingMorphMod.WEAPON_MORPH_ENTITY.get().create(player.level());
                 if (morphEntity != null) {
+                    morphEntity.setOriginalItem(item);
                     // 先设置位置，再设置所有者
                     morphEntity.setPos(player.getX(), player.getY() + 0.5, player.getZ());
                     morphEntity.setYRot(player.getYRot());

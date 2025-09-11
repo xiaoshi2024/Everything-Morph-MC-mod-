@@ -15,16 +15,15 @@ import net.minecraft.client.model.geom.builders.CubeDeformation;
 import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.MobCategory;
-import net.minecraft.world.item.CreativeModeTab;
-import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
+import net.minecraft.world.item.*;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentCategory;
 
@@ -74,10 +73,10 @@ public class EverythingMorphMod
     public static final DeferredRegister<EntityType<?>> ENTITIES =
             DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, EverythingMorphMod.MODID);
 
-    public static final RegistryObject<EntityType<WeaponMorphEntity>> WEAPON_MORPH_ENTITY = 
+    public static final RegistryObject<EntityType<WeaponMorphEntity>> WEAPON_MORPH_ENTITY =
             ENTITIES.register("weapon_morph_entity",
-                    () -> EntityType.Builder.of((EntityType.EntityFactory<WeaponMorphEntity>) 
-                                            (type, level) -> new WeaponMorphEntity(type, level, "weapon"), 
+                    () -> EntityType.Builder.of((EntityType.EntityFactory<WeaponMorphEntity>)
+                                            (type, level) -> new WeaponMorphEntity(type, level, "weapon"),
                                     MobCategory.CREATURE)
                             .sized(0.6F, 1.8F)
                             .build("weapon_morph_entity"));
@@ -113,12 +112,26 @@ public class EverythingMorphMod
                     .build());
 
     // 创建带有指定附魔的附魔书物品栈
+    // 创建带有指定附魔的附魔书物品栈
     private static ItemStack createEnchantedBookStack(Enchantment enchantment) {
+        // 使用 EnchantedBookItem 的静态方法创建附魔书
         ItemStack book = new ItemStack(Items.ENCHANTED_BOOK);
-        // 使用 EnchantmentHelper 来正确添加附魔
-        var enchantments = new HashMap<Enchantment, Integer>();
-        enchantments.put(enchantment, 1);
-        EnchantmentHelper.setEnchantments(enchantments, book);
+
+        // 创建一个新的复合标签来存储附魔
+        CompoundTag tag = book.getOrCreateTag();
+        CompoundTag storedEnchantments = new CompoundTag();
+
+        // 添加附魔到存储标签
+        storedEnchantments.putString("id", ForgeRegistries.ENCHANTMENTS.getKey(enchantment).toString());
+        storedEnchantments.putInt("lvl", 1);
+
+        // 创建StoredEnchantments列表
+        ListTag enchantmentsList = new ListTag();
+        enchantmentsList.add(storedEnchantments);
+
+        // 将附魔列表设置到物品标签中
+        tag.put("StoredEnchantments", enchantmentsList);
+
         return book;
     }
 
@@ -183,9 +196,8 @@ public class EverythingMorphMod
                 .executes(context -> {
                     ServerPlayer player = context.getSource().getPlayer();
                     if (player != null) {
-                        // 给玩家一本测试用的附魔书
-                        ItemStack enchantedBook = new ItemStack(Items.ENCHANTED_BOOK);
-                        enchantedBook.enchant(MORPH_ENCHANTMENT.get(), 1);
+                        // 使用正确的方法创建附魔书
+                        ItemStack enchantedBook = createEnchantedBookStack(MORPH_ENCHANTMENT.get());
                         player.addItem(enchantedBook);
 
                         context.getSource().sendSuccess(() ->
@@ -194,15 +206,14 @@ public class EverythingMorphMod
                     return 1;
                 }));
 
-        // 添加飞行剑测试命令
+        // 添加飞行剑测试命令 - 同样需要修复
         event.getDispatcher().register(Commands.literal("debugflysword")
                 .requires(source -> source.hasPermission(2))
                 .executes(context -> {
                     ServerPlayer player = context.getSource().getPlayer();
                     if (player != null) {
-                        // 给玩家一本测试用的飞行剑附魔书
-                        ItemStack enchantedBook = new ItemStack(Items.ENCHANTED_BOOK);
-                        enchantedBook.enchant(FLY_SWORD_ENCHANTMENT.get(), 1);
+                        // 使用正确的方法创建附魔书
+                        ItemStack enchantedBook = createEnchantedBookStack(FLY_SWORD_ENCHANTMENT.get());
                         player.addItem(enchantedBook);
 
                         context.getSource().sendSuccess(() ->
@@ -210,7 +221,48 @@ public class EverythingMorphMod
                     }
                     return 1;
                 }));
+
+        // 在 onRegisterCommands 方法中添加
+        event.getDispatcher().register(Commands.literal("summonmorph")
+                .requires(source -> source.hasPermission(2))
+                .executes(context -> {
+                    ServerPlayer player = context.getSource().getPlayer();
+                    if (player != null) {
+                        ItemStack heldItem = player.getMainHandItem();
+                        if (heldItem.isEmpty()) {
+                            context.getSource().sendFailure(Component.literal("请手持一个物品"));
+                            return 0;
+                        }
+
+                        WeaponMorphEntity morphEntity = WeaponMorphEntity.create(
+                                player.level(),
+                                getWeaponType(heldItem),
+                                heldItem.copy()
+                        );
+                        morphEntity.setOwner(player);
+                        morphEntity.moveTo(player.getX(), player.getY() + 1.0, player.getZ());
+                        player.level().addFreshEntity(morphEntity);
+
+                        context.getSource().sendSuccess(() ->
+                                        Component.literal("成功召唤化形NPC，物品: " + heldItem.getDisplayName().getString()),
+                                false
+                        );
+                        return 1;
+                    }
+                    return 0;
+                }));
+    
     }
+
+
+    // 添加辅助方法到 EverythingMorphMod 类
+    private static String getWeaponType(ItemStack itemStack) {
+        if (itemStack.getItem() instanceof SwordItem) return "sword";
+        if (itemStack.getItem() instanceof DiggerItem) return "tool";
+        if (itemStack.getItem() instanceof BlockItem) return "block";
+        return "weapon";
+    }
+
     // You can use SubscribeEvent and let the Event Bus discover methods to call
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event)
