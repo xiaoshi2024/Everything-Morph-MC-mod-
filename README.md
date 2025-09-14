@@ -12,7 +12,8 @@
 站在剑上进行空中移动
 体验真正的仙侠风格御剑飞行
 化形剑实体保持武器原有攻击特性
-English Introduction
+
+
 Core Features:
 Smart Enchantment System: Grants morphing abilities to any weapon or equipment.
 Skin Integration: Future Generated morph entities feature random skins connected to the player skin API.
