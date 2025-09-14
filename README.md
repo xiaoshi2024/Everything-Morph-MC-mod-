@@ -1,5 +1,5 @@
 智能附魔系统：为任何武器或装备赋予化形能力。
-皮肤集成：生成的化形实体拥有接入玩家皮肤API的随机皮肤。
+皮肤集成：未来 生成的化形实体拥有接入玩家皮肤API的随机皮肤。
 人形化身：装备物品触发后可生成具有人类形态的智能实体。
 对话交互：未来准备实现化形实体与玩家的智能对话交流。
 能力继承：未来准备实现化形实体完美继承原武器的所有特性和能力。
@@ -15,7 +15,7 @@
 English Introduction
 Core Features:
 Smart Enchantment System: Grants morphing abilities to any weapon or equipment.
-Skin Integration: Generated morph entities feature random skins connected to the player skin API.
+Skin Integration: Future Generated morph entities feature random skins connected to the player skin API.
 Humanoid Avatars: Equipment items can trigger the generation of intelligent entities with human forms.
 Dialogue Interaction: Future plans include enabling morph entities to engage in intelligent conversations with players.
 Ability Inheritance: Future plans include perfect inheritance of all characteristics and abilities of the original weapon.
