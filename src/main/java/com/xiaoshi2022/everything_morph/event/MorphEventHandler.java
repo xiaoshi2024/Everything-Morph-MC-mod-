@@ -1,6 +1,7 @@
 package com.xiaoshi2022.everything_morph.event;
 
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
+import com.xiaoshi2022.everything_morph.Network.NetworkHandler;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
@@ -67,6 +68,7 @@ public class MorphEventHandler {
 
     private static boolean spawnMorphEntity(Player player, ItemStack item) {
         if (!player.level().isClientSide) {
+
             long currentTime = player.level().getGameTime();
             if (currentTime - lastEntitySpawnTime < SPAWN_COOLDOWN) {
                 return false; // 冷却时间内不生成实体

@@ -1,5 +1,7 @@
 package com.xiaoshi2022.everything_morph;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.logging.LogUtils;
 import com.xiaoshi2022.everything_morph.Enchantment.MorphEnchantment;
 import com.xiaoshi2022.everything_morph.Enchantment.FlySwordEnchantment;
@@ -20,6 +22,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.MobCategory;
@@ -28,6 +31,7 @@ import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentCategory;
 
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.level.Level;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
 import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
@@ -191,6 +195,39 @@ public class EverythingMorphMod
 // 在 EverythingMorphMod.java 中修改 onRegisterCommands 方法
 
     private void onRegisterCommands(RegisterCommandsEvent event) {
+
+        // 给指定实体设置玩家皮肤名
+        event.getDispatcher().register(
+                Commands.literal("setmorphskin")
+                        .requires(src -> src.hasPermission(2))
+                        .then(Commands.argument("id", IntegerArgumentType.integer())
+                                .then(Commands.argument("skinName", StringArgumentType.string())
+                                        .executes(ctx -> {
+                                            ServerPlayer player = ctx.getSource().getPlayer();
+                                            int entityId = IntegerArgumentType.getInteger(ctx, "id");
+                                            String skinName = StringArgumentType.getString(ctx, "skinName");
+
+                                            Level level = player.level();
+                                            Entity entity = level.getEntity(entityId);
+
+                                            if (entity instanceof WeaponMorphEntity morph) {
+                                                morph.setGeneratedSkinName(skinName);
+                                                morph.loadSkinFromSavedName(); // 立即重载皮肤
+                                                ctx.getSource().sendSuccess(
+                                                        () -> Component.literal("✅ 已设置实体 " + entityId + " 的皮肤名为: " + skinName),
+                                                        false
+                                                );
+                                                return 1;
+                                            } else {
+                                                ctx.getSource().sendFailure(
+                                                        Component.literal("❌ 实体 " + entityId + " 不是 WeaponMorphEntity 或不存在")
+                                                );
+                                                return 0;
+                                            }
+                                        })
+                                ))
+        );
+
         event.getDispatcher().register(Commands.literal("debugmorph")
                 .requires(source -> source.hasPermission(2))
                 .executes(context -> {

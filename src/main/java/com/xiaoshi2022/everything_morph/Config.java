@@ -11,10 +11,14 @@ import net.minecraftforge.fml.common.Mod;
 public class Config {
     public static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
     public static final General GENERAL = new General(BUILDER);
+    public static int skinLoadRetryDelay = 100; // 皮肤加载重试延迟(ms)
+    public static int maxSkinLoadRetries = 3;   // 最大皮肤加载重试次数
 
     public static class General {
         public final ForgeConfigSpec.BooleanValue enableSkinCache;
         public final ForgeConfigSpec.IntValue skinCacheSizeMB;
+        public final ForgeConfigSpec.IntValue networkRetryCount; // 新增网络重试次数
+        public final ForgeConfigSpec.IntValue networkRetryDelay; // 新增网络重试延迟
 
         public General(ForgeConfigSpec.Builder builder) {
             builder.push("general");
@@ -29,6 +33,16 @@ public class Config {
                     .translation("config.everything_morph.skin_cache_size")
                     .defineInRange("skinCacheSizeMB", 100, 0, 1000);
 
+            networkRetryCount = builder
+                    .comment("网络包重试次数")
+                    .translation("config.everything_morph.network_retry_count")
+                    .defineInRange("networkRetryCount", 3, 1, 10);
+
+            networkRetryDelay = builder
+                    .comment("网络重试延迟(ms)")
+                    .translation("config.everything_morph.network_retry_delay")
+                    .defineInRange("networkRetryDelay", 50, 10, 1000);
+
             builder.pop();
         }
     }
@@ -38,6 +52,8 @@ public class Config {
     // 配置值实例
     public static boolean enableSkinCache;
     public static int skinCacheSizeMB;
+    public static int networkRetryCount; // 新增
+    public static int networkRetryDelay; // 新增
 
     // 注册配置
     public static void register() {
@@ -62,8 +78,10 @@ public class Config {
     private static void updateConfigValues() {
         enableSkinCache = GENERAL.enableSkinCache.get();
         skinCacheSizeMB = GENERAL.skinCacheSizeMB.get();
+        networkRetryCount = GENERAL.networkRetryCount.get(); // 新增
+        networkRetryDelay = GENERAL.networkRetryDelay.get(); // 新增
 
-        EverythingMorphMod.LOGGER.info("配置已加载: enableSkinCache={}, skinCacheSizeMB={}MB",
-                enableSkinCache, skinCacheSizeMB);
+        EverythingMorphMod.LOGGER.info("配置已加载: enableSkinCache={}, skinCacheSizeMB={}MB, networkRetryCount={}, networkRetryDelay={}ms",
+                enableSkinCache, skinCacheSizeMB, networkRetryCount, networkRetryDelay);
     }
 }

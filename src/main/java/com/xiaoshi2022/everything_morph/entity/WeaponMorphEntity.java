@@ -9,6 +9,7 @@ import com.xiaoshi2022.everything_morph.entity.Goal.FollowOwnerHurtByTargetGoal;
 import com.xiaoshi2022.everything_morph.entity.Goal.FollowOwnerHurtTargetGoal;
 import com.xiaoshi2022.everything_morph.entity.Goal.PlaceBlockGoal;
 import com.xiaoshi2022.everything_morph.util.RandomNameGenerator;
+import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -40,7 +41,10 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.network.PacketDistributor;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.xiaoshi2022.everything_morph.EverythingMorphMod.WEAPON_MORPH_ENTITY;
 
@@ -49,24 +53,27 @@ public class WeaponMorphEntity extends PathfinderMob {
     private final String weaponType;
     private Player owner;
     private ResourceLocation skinTexture;
-    private SkinLoadState skinLoadState = SkinLoadState.NOT_LOADED;
-    private static final Random RANDOM = new Random(); // ✅ 添加这行
+    public SkinLoadState skinLoadState = SkinLoadState.NOT_LOADED;
+    private static final Random RANDOM = new Random();
 
     private ItemStack originalItem = ItemStack.EMPTY;
 
-    // 添加这些字段
-    private int blockCount = 64; // 初始方块数量
+    private ResourceLocation cachedSkin = null;
+    private int blockCount = 64;
     private BlockPos lastPlayerPlacementPos;
     private int cooldown = 0;
 
-    // 保存随机生成的名字
+    private static final int MAX_SKIN_LOAD_RETRIES = 3;
+    private int skinLoadRetryCount = 0;
+
+    // 皮肤名称相关字段 - 修复核心问题
     private String generatedSkinName;
     private boolean nameGenerated = false;
+    private boolean skinNamePersisted = false;
 
-    /**
-     * 创建实体的属性构建器
-     */
-    // 修改 createAttributes 为更通用的基础值
+    // 皮肤缓存
+    private static final Map<String, ResourceLocation> SKIN_CACHE = new ConcurrentHashMap<>();
+
     public static AttributeSupplier.Builder createAttributes() {
         return Mob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 20.0D)
@@ -76,21 +83,31 @@ public class WeaponMorphEntity extends PathfinderMob {
                 .add(Attributes.FOLLOW_RANGE, 32.0D);
     }
 
-    // 修改构造函数，移除 originalItem 参数
     public WeaponMorphEntity(EntityType<? extends PathfinderMob> type, Level level, String weaponType) {
         super(type, level);
         this.weaponType = weaponType;
-        this.blockCount = 64; // 初始64个方块
-        this.originalItem = ItemStack.EMPTY; // 初始化为空
+        this.blockCount = 64;
+        this.originalItem = ItemStack.EMPTY;
 
+        // 在创建时生成固定名称 - 修复核心问题
         if (level.isClientSide) {
             this.skinLoadState = SkinLoadState.NOT_LOADED;
+            this.generatedSkinName = generateStableSkinName();
+            this.nameGenerated = true;
+            LOGGER.debug("实体创建时生成稳定皮肤名称: {}", generatedSkinName);
         } else {
             this.skinLoadState = SkinLoadState.LOADED;
         }
     }
 
-    // 添加获取和设置方块数量的方法
+    // 生成稳定的皮肤名称（基于UUID）
+    private String generateStableSkinName() {
+        UUID uuid = this.getUUID();
+        String[] skinNames = {"skin1", "skin2", "skin3", "skin4", "skin5"};
+        int index = Math.abs(uuid.hashCode()) % skinNames.length;
+        return skinNames[index];
+    }
+
     public int getBlockCount() {
         return blockCount;
     }
@@ -102,25 +119,110 @@ public class WeaponMorphEntity extends PathfinderMob {
         }
     }
 
-    // 在 WeaponMorphEntity 类中添加
     public static WeaponMorphEntity create(Level level, String weaponType, ItemStack originalItem) {
         WeaponMorphEntity entity = new WeaponMorphEntity(WEAPON_MORPH_ENTITY.get(), level, weaponType);
         entity.setOriginalItem(originalItem);
-        entity.applyItemStats(originalItem); // 应用物品属性
+        entity.applyItemStats(originalItem);
         return entity;
     }
 
-    // 记录玩家放置方块的位置
     public void recordPlayerPlacement(BlockPos pos) {
         this.lastPlayerPlacementPos = pos;
-        this.cooldown = 0; // 重置冷却，立即尝试放置
+        this.cooldown = 0;
         LOGGER.debug("实体 {} 记录玩家放置位置: {}", this.getId(), pos);
     }
 
-    // 方块耗尽死亡
+    private boolean trySmartBlockPlacement(BlockItem blockItem) {
+        if (owner == null || lastPlayerPlacementPos == null || blockCount <= 0) {
+            return false;
+        }
+
+        BlockPos targetPos = analyzePlayerPlacementPattern();
+        if (targetPos == null) {
+            targetPos = findSymmetricPlacementPosition();
+        }
+
+        if (targetPos == null || !canPlaceBlockAt(targetPos)) {
+            return false;
+        }
+
+        Direction placementDirection = determineBestPlacementDirection(targetPos);
+
+        try {
+            BlockPlaceContext context = new BlockPlaceContext(
+                    new UseOnContext(level(), null, InteractionHand.MAIN_HAND,
+                            originalItem, new BlockHitResult(
+                            Vec3.atCenterOf(targetPos), placementDirection, targetPos, false))
+            );
+
+            var result = blockItem.place(context);
+            if (result.consumesAction()) {
+                setBlockCount(blockCount - 1);
+                LOGGER.debug("智能放置成功，位置: {}, 方向: {}, 剩余方块: {}",
+                        targetPos, placementDirection, blockCount);
+
+                if (level() instanceof ServerLevel serverLevel) {
+                    serverLevel.sendParticles(ParticleTypes.HAPPY_VILLAGER,
+                            targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5,
+                            5, 0.2, 0.2, 0.2, 0.1);
+                }
+
+                cooldown = 20;
+                return true;
+            }
+        } catch (Exception e) {
+            LOGGER.error("智能放置失败", e);
+        }
+
+        return false;
+    }
+
+    private BlockPos analyzePlayerPlacementPattern() {
+        if (owner == null || lastPlayerPlacementPos == null) {
+            return null;
+        }
+
+        BlockPos playerPos = owner.blockPosition();
+        BlockPos lastPlacement = lastPlayerPlacementPos;
+        Vec3 toLastPlacement = Vec3.atCenterOf(lastPlacement).subtract(Vec3.atCenterOf(playerPos));
+        Direction primaryDirection = getPrimaryDirection(toLastPlacement);
+        return predictNextPosition(lastPlacement, primaryDirection);
+    }
+
+    private Direction getPrimaryDirection(Vec3 displacement) {
+        double absX = Math.abs(displacement.x());
+        double absY = Math.abs(displacement.y());
+        double absZ = Math.abs(displacement.z());
+
+        if (absX > absY && absX > absZ) {
+            return displacement.x() > 0 ? Direction.EAST : Direction.WEST;
+        } else if (absZ > absX && absZ > absY) {
+            return displacement.z() > 0 ? Direction.SOUTH : Direction.NORTH;
+        } else {
+            return displacement.y() > 0 ? Direction.UP : Direction.DOWN;
+        }
+    }
+
+    private BlockPos predictNextPosition(BlockPos lastPos, Direction direction) {
+        if (owner != null) {
+            Direction playerFacing = owner.getDirection();
+            if (playerFacing.getAxis() == direction.getAxis()) {
+                return lastPos.relative(direction);
+            }
+            return lastPos.relative(playerFacing);
+        }
+        return lastPos.relative(direction);
+    }
+
+    private Direction determineBestPlacementDirection(BlockPos targetPos) {
+        if (owner != null) {
+            return owner.getDirection();
+        }
+        return Direction.UP;
+    }
+
     private void dieFromBlockExhaustion() {
         if (!this.level().isClientSide) {
-            // 播放死亡效果
             if (level() instanceof ServerLevel serverLevel) {
                 serverLevel.sendParticles(ParticleTypes.CLOUD,
                         getX(), getY() + 0.5, getZ(),
@@ -130,53 +232,29 @@ public class WeaponMorphEntity extends PathfinderMob {
         }
     }
 
-    // 添加调试方法
-    public String getDebugItemInfo() {
-        return String.format("物品: %s, 数量: %d, 是方块物品: %b",
-                originalItem.getItem().getDescription().getString(),
-                originalItem.getCount(),
-                originalItem.getItem() instanceof BlockItem);
-    }
-
-    public String getDebugOwnerInfo() {
-        return String.format("主人: %s, 主人存在: %b",
-                owner != null ? owner.getName().getString() : "null",
-                owner != null);
-    }
-
     private void applyItemStats(ItemStack item) {
         if (item.isEmpty()) return;
 
-        // 根据物品类型设置不同的属性
         if (item.getItem() instanceof SwordItem sword) {
-            // 继承剑的攻击力
             getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(sword.getDamage() + 1.0D);
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(20.0D + sword.getDamage() * 2);
         } else if (item.getItem() instanceof DiggerItem tool) {
-            // 继承工具的属性
             getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(tool.getAttackDamage() + 1.0D);
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(15.0D + tool.getAttackDamage() * 3);
         } else if (item.getItem() instanceof BlockItem) {
-            // 方块物品 - 防御型
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(30.0D);
             getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(2.0D);
             getAttribute(Attributes.ARMOR).setBaseValue(5.0D);
         }
 
-        // 设置当前生命值为最大值
         setHealth((float) getAttributeValue(Attributes.MAX_HEALTH));
     }
 
-
     public void setOriginalItem(ItemStack item) {
         this.originalItem = item.copy();
-
-        // 如果是方块物品，设置初始方块数量
         if (item.getItem() instanceof BlockItem) {
-            this.blockCount = item.getCount(); // 继承物品堆叠数量
+            this.blockCount = item.getCount();
         }
-
-        // 应用物品属性
         applyItemStats(item);
     }
 
@@ -187,33 +265,26 @@ public class WeaponMorphEntity extends PathfinderMob {
     @Override
     protected void customServerAiStep() {
         super.customServerAiStep();
-
-        // 如果上次移动被阻止（撞墙），立即同步位置
         if (!this.level().isClientSide && this.level() instanceof ServerLevel serverLevel) {
             serverLevel.getChunkSource().broadcast(this, new ClientboundTeleportEntityPacket(this));
         }
     }
 
-    /**
-     * 保存实体数据到NBT
-     */
     @Override
     public void addAdditionalSaveData(CompoundTag compound) {
         super.addAdditionalSaveData(compound);
         compound.putInt("BlockCount", blockCount);
         compound.put("OriginalItem", originalItem.save(new CompoundTag()));
-        // 保存生成的皮肤名字
+
+        // 保存皮肤名称和状态 - 修复核心问题
         if (generatedSkinName != null) {
             compound.putString("SkinName", generatedSkinName);
+            compound.putBoolean("NameGenerated", nameGenerated);
+            compound.putBoolean("SkinNamePersisted", skinNamePersisted);
+            LOGGER.debug("保存皮肤名称: {}", generatedSkinName);
         }
-        compound.putBoolean("NameGenerated", nameGenerated);
-
-//        LOGGER.debug("保存实体数据 - 皮肤名字: {}, 已生成: {}", generatedSkinName, nameGenerated);
     }
 
-    /**
-     * 从NBT加载实体数据
-     */
     @Override
     public void readAdditionalSaveData(CompoundTag compound) {
         super.readAdditionalSaveData(compound);
@@ -224,96 +295,125 @@ public class WeaponMorphEntity extends PathfinderMob {
 
         if (compound.contains("OriginalItem")) {
             this.originalItem = ItemStack.of(compound.getCompound("OriginalItem"));
-            // 重新应用物品属性
             applyItemStats(this.originalItem);
         }
 
-        // 加载保存的皮肤名字
-        if (compound.contains("SkinName")) {
+        // 修复：正确处理皮肤名称的加载
+        if (compound.contains("SkinName") && compound.contains("NameGenerated")) {
             generatedSkinName = compound.getString("SkinName");
             nameGenerated = compound.getBoolean("NameGenerated");
+            skinNamePersisted = compound.getBoolean("SkinNamePersisted");
+            LOGGER.debug("从NBT加载皮肤名称: {}", generatedSkinName);
 
-//            LOGGER.debug("从NBT加载皮肤名字: {}, 已生成: {}", generatedSkinName, nameGenerated);
-
-            // 如果已经有保存的名字，使用它来加载皮肤
-            if (this.level().isClientSide && generatedSkinName != null) {
-                this.skinLoadState = SkinLoadState.LOADING;
+            if (this.level().isClientSide && skinLoadState == SkinLoadState.NOT_LOADED) {
                 loadSkinFromSavedName();
             }
-        } else {
-//            LOGGER.debug("没有保存的皮肤名字，需要生成新的");
-            // 如果没有保存的名字，说明是第一次生成，需要创建随机名字
-            if (this.level().isClientSide) {
-                this.skinLoadState = SkinLoadState.LOADING;
-                loadSkinFromRandomName();
-            }
+        } else if (!nameGenerated) {
+            // 首次生成稳定名称
+            generatedSkinName = generateStableSkinName();
+            nameGenerated = true;
+            skinNamePersisted = false;
+            LOGGER.debug("首次生成稳定皮肤名称: {}", generatedSkinName);
         }
     }
 
-    /**
-     * 使用保存的名字加载皮肤
-     */
-    private void loadSkinFromSavedName() {
+    public void loadSkinFromSavedName() {
         if (this.level().isClientSide && generatedSkinName != null) {
-//            LOGGER.debug("使用保存的名字加载皮肤: {}", generatedSkinName);
-            ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(generatedSkinName);
+            LOGGER.debug("尝试从保存的名字加载皮肤: {}", generatedSkinName);
 
-            if (skin != null) {
-                this.skinTexture = skin;
-                this.skinLoadState = SkinLoadState.LOADED;
-//                LOGGER.debug("成功加载保存的皮肤: {}", skin);
-            } else {
-//                LOGGER.warn("保存的皮肤不存在: {}, 重新生成", generatedSkinName);
-                // 如果保存的皮肤不存在，重新生成
-                loadSkinFromRandomName();
-            }
-        }
-    }
-
-    public void loadSkinFromRandomName() {
-        if (this.level().isClientSide) {
-            LOGGER.debug("开始加载随机皮肤...");
-
-            // 如果已经加载过但失败了，避免重复尝试
-            if (skinLoadState == SkinLoadState.FAILED) {
-                LOGGER.debug("实体 {} 皮肤加载已失败，不再重复尝试", this.getId());
+            // 检查全局缓存
+            ResourceLocation cached = SKIN_CACHE.get(generatedSkinName);
+            if (cached != null) {
+                skinTexture = cached;
+                cachedSkin = cached;
+                skinLoadState = SkinLoadState.LOADED;
+                LOGGER.debug("从全局缓存加载皮肤: {}", cached);
                 return;
             }
 
-            // 只在第一次生成随机名字
-            if (!nameGenerated) {
-                // ✅ 使用新的随机皮肤名字生成器
-                generatedSkinName = RandomNameGenerator.getInstance().generateRandomSkinName();
-                nameGenerated = true;
-                LOGGER.debug("为实体 {} 生成皮肤名字: {}", this.getId(), generatedSkinName);
-            }
-
             ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(generatedSkinName);
-
-            if (skin != null && !skin.toString().contains("steve.png")) {
-                this.skinTexture = skin;
-                this.skinLoadState = SkinLoadState.LOADED;
-                LOGGER.info("✅ 实体 {} 成功加载皮肤: {}", this.getId(), skin);
+            if (skin != null) {
+                skinTexture = skin;
+                cachedSkin = skin;
+                skinLoadState = SkinLoadState.LOADED;
+                SKIN_CACHE.put(generatedSkinName, skin); // 添加到全局缓存
+                LOGGER.info("✅ 成功加载并缓存皮肤: {}", skin);
             } else {
-                LOGGER.warn("❌ 无法根据名字找到皮肤: {}, 使用随机皮肤", generatedSkinName);
-                this.skinLoadState = SkinLoadState.FAILED;
+                LOGGER.warn("保存的皮肤不存在: {}, 使用默认皮肤", generatedSkinName);
+                skinTexture = DefaultPlayerSkin.getDefaultSkin();
+                skinLoadState = SkinLoadState.FAILED;
             }
-        } else {
-            this.skinLoadState = SkinLoadState.LOADED;
         }
+    }
+
+    // 修改 loadSkinFromRandomName 方法 - 修复核心问题
+    public void loadSkinFromRandomName() {
+        if (this.level().isClientSide && skinLoadState != SkinLoadState.LOADED && skinLoadState != SkinLoadState.FAILED) {
+            LOGGER.debug("开始加载皮肤...");
+
+            // 检查重试次数
+            if (skinLoadRetryCount >= MAX_SKIN_LOAD_RETRIES) {
+                LOGGER.warn("皮肤加载重试次数超过限制，使用默认皮肤");
+                skinTexture = DefaultPlayerSkin.getDefaultSkin();
+                skinLoadState = SkinLoadState.FAILED;
+                return;
+            }
+
+            skinLoadState = SkinLoadState.LOADING;
+            skinLoadRetryCount++;
+
+            // 确保名称只生成一次
+            if (!nameGenerated) {
+                generatedSkinName = generateStableSkinName();
+                nameGenerated = true;
+                skinNamePersisted = false;
+                LOGGER.debug("为实体 {} 设置固定皮肤名称: {}", this.getId(), generatedSkinName);
+            }
+
+            // 使用缓存或加载皮肤
+            ResourceLocation skin = getCachedSkin(generatedSkinName);
+            if (skin != null && !skin.toString().contains("steve")) {
+                cachedSkin = skin;
+                skinTexture = skin;
+                skinLoadState = SkinLoadState.LOADED;
+                LOGGER.info("✅ 实体 {} 皮肤加载完成: {}", this.getId(), skin);
+            } else {
+                LOGGER.warn("皮肤加载失败，将在下次tick重试");
+                skinLoadState = SkinLoadState.NOT_LOADED;
+            }
+        }
+    }
+
+    // 添加皮肤缓存方法
+    private ResourceLocation getCachedSkin(String skinName) {
+        // 检查全局缓存
+        ResourceLocation globalCached = SKIN_CACHE.get(skinName);
+        if (globalCached != null) {
+            return globalCached;
+        }
+
+        // 检查实例缓存
+        if (cachedSkin != null && skinName.equals(generatedSkinName)) {
+            return cachedSkin;
+        }
+
+        // 从加载器获取并缓存
+        ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(skinName);
+        if (skin != null) {
+            SKIN_CACHE.put(skinName, skin);
+        }
+        return skin;
     }
 
     @Override
     protected void registerGoals() {
-        // ===== 行为 Goal（移动、攻击、放置） =====
         this.goalSelector.addGoal(2, new FollowOwnerGoalSimple(this, 1.2D, 2.0F, 6.0F));
         this.goalSelector.addGoal(3, new MeleeAttackGoal(this, 1.2D, true));
         this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 1.0D));
-        this.goalSelector.addGoal(5, new PlaceBlockGoal(this)); // 放置方块
+        this.goalSelector.addGoal(5, new PlaceBlockGoal(this));
 
-        // ===== 目标 Target（选谁打） =====
-        this.targetSelector.addGoal(1, new FollowOwnerHurtByTargetGoal(this)); // 主人被谁打，我打谁
-        this.targetSelector.addGoal(2, new FollowOwnerHurtTargetGoal(this));   // 主人打谁，我打谁
+        this.targetSelector.addGoal(1, new FollowOwnerHurtByTargetGoal(this));
+        this.targetSelector.addGoal(2, new FollowOwnerHurtTargetGoal(this));
         this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Mob.class, 5, false, false,
                 e -> e != null && e != owner && !(e instanceof WeaponMorphEntity)));
     }
@@ -322,31 +422,25 @@ public class WeaponMorphEntity extends PathfinderMob {
     public boolean doHurtTarget(Entity target) {
         if (!(target instanceof LivingEntity living)) return false;
 
-        // 1. 计算伤害（含附魔）
         float dmg = (float) EnchantmentHelper.getDamageBonus(originalItem, living.getMobType());
         if (dmg <= 0) dmg = 3.0F;
 
-        // 2. 应用伤害
         boolean success = living.hurt(damageSources().mobAttack(this), dmg);
 
         if (success && !originalItem.isEmpty() && originalItem.isDamageableItem()) {
-            // 3. 手动减耐久（不调用 hurtAndBreak）
             int newDamage = originalItem.getDamageValue() + 1;
             originalItem.setDamageValue(newDamage);
 
-            // 4. 如果耐久耗尽，销毁物品
             if (originalItem.getDamageValue() >= originalItem.getMaxDamage()) {
-                originalItem.shrink(1); // 直接销毁
+                originalItem.shrink(1);
             }
 
-            // 5. 火焰附加 - 修复：使用正确的方法获取火焰附加等级
-            int fireLevel = EnchantmentHelper.getFireAspect(this); // 使用 this (LivingEntity)
+            int fireLevel = EnchantmentHelper.getFireAspect(this);
             if (fireLevel > 0) {
                 living.setSecondsOnFire(fireLevel * 4);
             }
 
-            // 6. 击退 - 修复：使用正确的方法获取击退等级
-            int knockbackLevel = EnchantmentHelper.getKnockbackBonus(this); // 使用 this (LivingEntity)
+            int knockbackLevel = EnchantmentHelper.getKnockbackBonus(this);
             if (knockbackLevel > 0) {
                 living.knockback(knockbackLevel * 0.5F, this.getX() - living.getX(), this.getZ() - living.getZ());
             }
@@ -356,11 +450,11 @@ public class WeaponMorphEntity extends PathfinderMob {
 
     @Override
     public Component getDisplayName() {
-        // 使用随机生成器创建显示名称
         if (this.hasCustomName()) {
             return super.getDisplayName();
         }
-        return Component.literal(RandomNameGenerator.getInstance().generateRandomDisplayName());
+        // 使用稳定的显示名称（基于实体ID）
+        return Component.literal("Morph_" + this.getId());
     }
 
     public void setOwner(Player owner) {
@@ -368,7 +462,10 @@ public class WeaponMorphEntity extends PathfinderMob {
     }
 
     public ResourceLocation getSkinTexture() {
-        return skinTexture != null ? skinTexture : new ResourceLocation("textures/entity/steve.png");
+        if (skinTexture != null && skinLoadState == SkinLoadState.LOADED) {
+            return skinTexture;
+        }
+        return DefaultPlayerSkin.getDefaultSkin();
     }
 
     @Override
@@ -377,14 +474,24 @@ public class WeaponMorphEntity extends PathfinderMob {
         LOGGER.debug("实体添加到世界，ID: {}", this.getId());
 
         if (!this.level().isClientSide) {
-            syncSkinToClient();
+            // 服务器端：生成稳定名称
+            if (!nameGenerated) {
+                generatedSkinName = generateStableSkinName();
+                nameGenerated = true;
+                skinNamePersisted = false;
+                LOGGER.debug("服务器生成皮肤名字: {}", generatedSkinName);
+            }
+        } else {
+            // 客户端：开始加载皮肤（减少频率）
+            if (skinLoadState == SkinLoadState.NOT_LOADED && this.tickCount % 20 == 0) {
+                loadSkinFromRandomName();
+            }
         }
     }
 
     private void syncSkinToClient() {
         if (this.skinTexture != null && !this.level().isClientSide) {
-            LOGGER.debug("同步皮肤到客户端: {}", this.skinTexture);
-            NetworkHandler.INSTANCE.send(PacketDistributor.TRACKING_ENTITY.with(() -> this),
+            NetworkHandler.sendToAllTrackingWithRetry(this,
                     new SkinUpdatePacket(this.getId(), this.skinTexture));
         }
     }
@@ -398,120 +505,44 @@ public class WeaponMorphEntity extends PathfinderMob {
             cooldown--;
         }
 
-        // 尝试跟随玩家放置方块 - 只有在有记录的位置时才执行
+        // 智能方块放置
         if (!level().isClientSide && cooldown == 0 && lastPlayerPlacementPos != null) {
-            tryFollowPlayerPlaceBlock();
-        }
-        
-        if (!level().isClientSide && !originalItem.isEmpty()) {
-            Item item = originalItem.getItem();
-
-            if (item instanceof BlockItem blockItem) {
-                tryPlaceBlock(blockItem);
-            } else if (item instanceof SwordItem || item instanceof DiggerItem) {
-                tryAttackNearby();
-            }
-        }
-
-        // 客户端每20tick检查一次皮肤状态
-        if (this.level().isClientSide && this.tickCount % 20 == 0) {
-            if (skinLoadState == SkinLoadState.NOT_LOADED) {
-//                LOGGER.debug("实体 {} 皮肤未加载，开始加载", this.getId());
-                loadSkinFromRandomName();
-            } else if (skinLoadState == SkinLoadState.LOADING) {
-//                LOGGER.debug("实体 {} 皮肤正在加载中...", this.getId());
-            }
-        }
-    }
-
-    // 尝试跟随玩家放置方块
-    private void tryFollowPlayerPlaceBlock() {
-        if (blockCount <= 0) {
-            LOGGER.debug("实体 {} 方块数量为0，无法放置", this.getId());
-            return;
-        }
-
-        if (!(originalItem.getItem() instanceof BlockItem blockItem)) {
-            LOGGER.debug("实体 {} 持有的不是方块物品: {}", this.getId(), originalItem.getItem());
-            return;
-        }
-
-        // 检查距离（32格内）
-        double distanceSq = lastPlayerPlacementPos.distSqr(this.blockPosition());
-        if (distanceSq > 32 * 32) {
-            LOGGER.debug("实体 {} 距离玩家放置位置太远: {}格", this.getId(), Math.sqrt(distanceSq));
-            return;
-        }
-
-        // 寻找合适的放置位置（玩家放置位置的对称位置）
-        BlockPos placePos = findSymmetricPlacementPosition();
-        if (placePos == null) {
-            LOGGER.debug("实体 {} 无法找到对称放置位置", this.getId());
-            return;
-        }
-
-        if (!canPlaceBlockAt(placePos)) {
-            LOGGER.debug("实体 {} 位置 {} 无法放置方块", this.getId(), placePos);
-            return;
-        }
-
-        try {
-            // 放置方块 - 使用 BlockPlaceContext
-            BlockPlaceContext context = new BlockPlaceContext(
-                    new UseOnContext(level(), null, InteractionHand.MAIN_HAND,
-                            originalItem, new BlockHitResult(
-                            Vec3.atCenterOf(placePos), Direction.UP, placePos, false))
-            );
-
-            // 在 1.20.1 中，place 方法返回 InteractionResult
-            var result = blockItem.place(context);
-            if (result.consumesAction()) {
-                // 消耗方块
-                setBlockCount(blockCount - 1);
-                LOGGER.info("实体 {} 成功放置方块，剩余方块: {}", this.getId(), blockCount);
-
-                // 播放放置效果
-                if (level() instanceof ServerLevel serverLevel) {
-                    serverLevel.sendParticles(ParticleTypes.HAPPY_VILLAGER,
-                            placePos.getX() + 0.5, placePos.getY() + 0.5, placePos.getZ() + 0.5,
-                            5, 0.2, 0.2, 0.2, 0.1);
+            if (originalItem.getItem() instanceof BlockItem blockItem) {
+                if (trySmartBlockPlacement(blockItem)) {
+                    this.lastPlayerPlacementPos = null;
                 }
-
-                // 重置冷却
-                cooldown = 20;
-
-                // 清除记录的位置，避免重复放置
-                this.lastPlayerPlacementPos = null;
-            } else {
-                LOGGER.debug("实体 {} 放置方块失败: {}", this.getId(), result);
             }
-        } catch (Exception e) {
-            LOGGER.error("实体 {} 放置方块时发生错误", this.getId(), e);
+        }
+
+        // 客户端皮肤加载逻辑（减少检查频率）- 修复核心问题
+        if (this.level().isClientSide) {
+            if (this.tickCount % 40 == 0) { // 每2秒检查一次
+                if (skinLoadState == SkinLoadState.NOT_LOADED) {
+                    loadSkinFromRandomName();
+                } else if (skinLoadState == SkinLoadState.LOADED && skinTexture != null && !skinNamePersisted) {
+                    // 标记名称已持久化，避免重复处理
+                    skinNamePersisted = true;
+                }
+            }
         }
     }
 
-    // 寻找对称放置位置
     private BlockPos findSymmetricPlacementPosition() {
         if (owner == null || lastPlayerPlacementPos == null) {
             return null;
         }
 
-        // 计算相对于玩家的对称位置
         BlockPos playerPos = owner.blockPosition();
         BlockPos relativePlacement = lastPlayerPlacementPos.subtract(playerPos);
-
-        // 返回相对于NPC的对称位置
         return this.blockPosition().offset(relativePlacement.getX(),
                 relativePlacement.getY(),
                 relativePlacement.getZ());
     }
 
-    // 检查是否可以在此位置放置方块
     private boolean canPlaceBlockAt(BlockPos pos) {
         return level().getBlockState(pos).canBeReplaced() &&
-                level().isEmptyBlock(pos.above()); // 确保上方没有方块阻挡
+                level().isEmptyBlock(pos.above());
     }
-
 
     private void tryAttackNearby() {
         AABB area = new AABB(this.blockPosition()).inflate(2.0D);
@@ -557,7 +588,7 @@ public class WeaponMorphEntity extends PathfinderMob {
     }
 
     public LivingEntity getOwner() {
-        return this.owner; // 返回实际的 owner 字段
+        return this.owner;
     }
 
     public BlockPos getLastPlayerPlacementPos() {
@@ -568,6 +599,12 @@ public class WeaponMorphEntity extends PathfinderMob {
         return blockCount > 0;
     }
 
+    public void setGeneratedSkinName(String name) {
+        this.generatedSkinName = name;
+        this.nameGenerated = true;
+        this.skinNamePersisted = true;
+    }
+
     public enum SkinLoadState {
         NOT_LOADED, LOADING, LOADED, FAILED
     }
@@ -576,7 +613,7 @@ public class WeaponMorphEntity extends PathfinderMob {
      * 调试方法：获取实体信息
      */
     public String getDebugInfo() {
-        return String.format("ID: %d, SkinState: %s, Skin: %s, GeneratedName: %s, NameGenerated: %b",
-                this.getId(), skinLoadState, skinTexture, generatedSkinName, nameGenerated);
+        return String.format("ID: %d, SkinState: %s, Skin: %s, GeneratedName: %s, NameGenerated: %b, Persisted: %b",
+                this.getId(), skinLoadState, skinTexture, generatedSkinName, nameGenerated, skinNamePersisted);
     }
 }
