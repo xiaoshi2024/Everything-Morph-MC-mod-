@@ -1,8 +1,10 @@
 package com.xiaoshi2022.everything_morph.event;
 
+import com.mojang.authlib.GameProfile;
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
 import com.xiaoshi2022.everything_morph.Network.NetworkHandler;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -12,6 +14,9 @@ import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
@@ -65,45 +70,33 @@ public class MorphEventHandler {
     }
 
     // 在 spawnMorphEntity 方法中修改皮肤加载逻辑
-
     private static boolean spawnMorphEntity(Player player, ItemStack item) {
         if (!player.level().isClientSide) {
-
             long currentTime = player.level().getGameTime();
             if (currentTime - lastEntitySpawnTime < SPAWN_COOLDOWN) {
-                return false; // 冷却时间内不生成实体
+                return false;
             }
             lastEntitySpawnTime = (int) currentTime;
 
             try {
-                WeaponMorphEntity morphEntity = EverythingMorphMod.WEAPON_MORPH_ENTITY.get().create(player.level());
+                // 生成随机玩家名
+                String randomName = com.xiaoshi2022.everything_morph.util.RandomNameGenerator.getInstance().generateRandomPlayerName();
+
+                // 使用随机玩家名创建GameProfile
+                UUID nameBasedUUID = UUID.nameUUIDFromBytes(randomName.getBytes(StandardCharsets.UTF_8));
+                GameProfile playerProfile = new GameProfile(nameBasedUUID, randomName);
+
+                WeaponMorphEntity morphEntity = WeaponMorphEntity.create(player.level(), "weapon", item, playerProfile);
                 if (morphEntity != null) {
-                    morphEntity.setOriginalItem(item);
-                    // 先设置位置，再设置所有者
                     morphEntity.setPos(player.getX(), player.getY() + 0.5, player.getZ());
                     morphEntity.setYRot(player.getYRot());
-
-                    // 设置所有者
                     morphEntity.setOwner(player);
-                    LOGGER.info("设置实体 {} 的所有者为 {}", morphEntity.getId(), player.getName().getString());
 
-                    // 设置实体属性基于物品
-                    setupEntityFromItem(morphEntity, item);
+                    // 设置实体名称
+                    morphEntity.setCustomName(Component.literal(randomName));
 
-                    // 生成实体
                     if (player.level().addFreshEntity(morphEntity)) {
-                        LOGGER.info("化形实体生成成功! ID: " + morphEntity.getId());
-
-                        // 注意：皮肤加载已经在实体构造函数中开始了
-                        // 不需要在这里强制加载皮肤
-
-                        // 移除玩家手中的物品（非创造模式）
-                        if (!player.isCreative()) {
-                            item.shrink(1);
-                            if (item.isEmpty()) {
-                                player.setItemInHand(player.getUsedItemHand(), ItemStack.EMPTY);
-                            }
-                        }
+                        LOGGER.info("化形实体生成成功! ID: {}, 名称: {}", morphEntity.getId(), randomName);
                         return true;
                     }
                 }

@@ -1,6 +1,7 @@
 package com.xiaoshi2022.everything_morph.client;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
@@ -8,6 +9,11 @@ import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import org.slf4j.Logger;
 
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
@@ -38,13 +44,45 @@ public class ResourcePackSkinLoader implements ResourceManagerReloadListener {
     private final List<ResourceLocation> availableSkins = new CopyOnWriteArrayList<>();
     private final Map<String, ResourceLocation> skinNameMap = new HashMap<>();
     private boolean isInitialized = false;
+    private Path externalSkinDir;
 
     private ResourcePackSkinLoader() {
         // 私有构造函数，使用单例模式
+        // 使用Minecraft游戏目录来构建外部皮肤目录的绝对路径
+        Path minecraftDir = null;
+        try {
+            // 在Forge中，可以通过Minecraft.getInstance().gameDirectory获取游戏目录
+            minecraftDir = Paths.get(net.minecraft.client.Minecraft.getInstance().gameDirectory.getAbsolutePath());
+        } catch (Exception e) {
+            // 如果无法获取游戏目录，则使用当前工作目录
+            minecraftDir = Paths.get(System.getProperty("user.dir"));
+            LOGGER.warn("无法获取Minecraft游戏目录，使用当前工作目录: {}", minecraftDir);
+        }
+        this.externalSkinDir = minecraftDir.resolve("config/everything_morph/skins");
+        LOGGER.info("外部皮肤目录: {}", this.externalSkinDir.toAbsolutePath());
     }
 
     public static ResourcePackSkinLoader getInstance() {
         return INSTANCE;
+    }
+
+    /**
+     * 初始化皮肤加载器
+     */
+    public void initialize() {
+        // 确保外部皮肤目录存在
+        try {
+            if (!Files.exists(externalSkinDir)) {
+                Files.createDirectories(externalSkinDir);
+                LOGGER.info("创建外部皮肤目录: {}", externalSkinDir.toAbsolutePath());
+            }
+
+            // 初始加载皮肤
+            reloadSkins(net.minecraft.client.Minecraft.getInstance().getResourceManager());
+            isInitialized = true;
+        } catch (IOException e) {
+            LOGGER.error("无法创建外部皮肤目录", e);
+        }
     }
 
     @Override
@@ -57,7 +95,27 @@ public class ResourcePackSkinLoader implements ResourceManagerReloadListener {
         availableSkins.clear();
         skinNameMap.clear();
 
-        // 查找所有皮肤文件
+        // 加载内置资源包皮肤
+        loadBuiltInSkins(resourceManager);
+
+        // 加载外部文件夹皮肤
+        loadExternalSkins();
+
+        // 如果没有找到皮肤文件，添加默认皮肤
+        if (availableSkins.isEmpty()) {
+            LOGGER.info("未找到皮肤文件，添加默认皮肤");
+            addDefaultSkins();
+        }
+
+        LOGGER.info("加载了 {} 个皮肤文件，映射了 {} 个皮肤名称",
+                availableSkins.size(), skinNameMap.size());
+        isInitialized = true;
+    }
+
+    /**
+     * 加载内置资源包中的皮肤
+     */
+    private void loadBuiltInSkins(ResourceManager resourceManager) {
         try {
             // 使用资源管理器枚举实际的皮肤文件
             resourceManager.listResources("textures/entity/skins", path -> {
@@ -70,31 +128,53 @@ public class ResourcePackSkinLoader implements ResourceManagerReloadListener {
                 String skinName = extractSkinNameFromPath(location.getPath());
                 skinNameMap.put(skinName, location);
 
-                LOGGER.debug("发现皮肤文件: {} -> {}", skinName, location);
+                LOGGER.debug("发现内置皮肤文件: {} -> {}", skinName, location);
             });
-
-            // 如果没有找到皮肤文件，添加默认皮肤
-            if (availableSkins.isEmpty()) {
-                LOGGER.info("未找到皮肤文件，添加默认皮肤");
-                addDefaultSkins();
-            }
-
-            LOGGER.info("加载了 {} 个皮肤文件，映射了 {} 个皮肤名称",
-                    availableSkins.size(), skinNameMap.size());
-            isInitialized = true;
         } catch (Exception e) {
-            LOGGER.error("加载皮肤文件时出错: {}", e.getMessage(), e);
-            // 添加默认皮肤作为后备
-            addDefaultSkins();
-            isInitialized = true;
+            LOGGER.error("加载内置皮肤文件时出错: {}", e.getMessage(), e);
         }
     }
 
+    /**
+     * 扫描外部皮肤文件夹：config/everything_morph/skins/
+     * 使用正确的资源位置映射
+     */
+    // 1. 整个方法留空或删除
+    private void loadExternalSkins() {
+        LOGGER.info("扫描外部皮肤文件夹: {}", externalSkinDir.toAbsolutePath());
+
+        if (!Files.exists(externalSkinDir) || !Files.isDirectory(externalSkinDir)) {
+            return;
+        }
+
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(externalSkinDir, "*.{png,svg}")) {
+            for (Path file : stream) {
+                if (!Files.isRegularFile(file)) continue;
+
+                String fileName = file.getFileName().toString();
+                String skinName = fileName.replaceAll("(?i)\\.(png|svg)$", "");
+
+                // ✅ 注册成合规资源位置
+                ResourceLocation location = new ResourceLocation("everything_morph_external",
+                        "textures/entity/skins/" + skinName + ".png");
+
+                availableSkins.add(location);
+                skinNameMap.put(skinName, location);
+                skinNameMap.put("external_" + skinName, location);
+
+                LOGGER.info("✅ 注册外部皮肤: {} -> {}", skinName, location);
+            }
+        } catch (IOException e) {
+            LOGGER.error("扫描外部皮肤文件夹失败", e);
+        }
+    }
+
+
     private void addDefaultSkins() {
         // 添加默认皮肤
-        ResourceLocation defaultSkin = new ResourceLocation(MOD_ID, "textures/entity/skins/default_skin.png");
+        ResourceLocation defaultSkin = new ResourceLocation("textures/entity/steve.png");
         availableSkins.add(defaultSkin);
-        skinNameMap.put("default_skin", defaultSkin);
+        skinNameMap.put("default", defaultSkin);
 
         // 添加一些内置的示例皮肤
         String[] defaultSkins = {"skin1", "skin2", "skin3", "skin4", "skin5"};
@@ -115,67 +195,39 @@ public class ResourcePackSkinLoader implements ResourceManagerReloadListener {
         return name;
     }
 
-    /**
-     * 根据名字获取皮肤资源位置
-     * 支持万用皮肤补丁模组的命名约定
-     */
-    // 修改 getSkinByName 方法，添加更好的回退机制
     public ResourceLocation getSkinByName(String name) {
+        LOGGER.info("🔍 深度查找皮肤: {}", name);
+
         if (!isInitialized) {
-            reloadSkins(net.minecraft.client.Minecraft.getInstance().getResourceManager());
+            initialize();
         }
-
-        if (name == null || name.isEmpty()) {
-            LOGGER.warn("皮肤名称为空，使用默认皮肤");
-            return getDefaultSkin();
-        }
-
-        // 1.20.1+ 检查是否是默认皮肤请求
-        if (name.equals("default") || name.contains("steve")) {
-            return getDefaultSkin();
-        }
-
-        if (name == null || name.isEmpty()) {
-            LOGGER.warn("皮肤名称为空，使用随机皮肤");
-            return getRandomSkin();
-        }
-
-        LOGGER.debug("查找皮肤: {}", name);
 
         // 1. 首先尝试精确匹配
         ResourceLocation exactMatch = skinNameMap.get(name);
         if (exactMatch != null) {
-            LOGGER.debug("找到精确匹配的皮肤: {}", exactMatch);
+            LOGGER.info("✅ 精确匹配找到皮肤: {} -> {}", name, exactMatch);
             return exactMatch;
         }
 
-        // 2. 尝试小写匹配（很多资源包使用小写文件名）
-        ResourceLocation lowerCaseMatch = skinNameMap.get(name.toLowerCase());
+        // 2. 检查外部皮肤目录中的实际文件
+        Path skinFile = externalSkinDir.resolve(name + ".png");
+        if (Files.exists(skinFile)) {
+            LOGGER.info("✅ 找到外部皮肤文件: {}", skinFile);
+            // 返回已经在 loadExternalSkins() 中注册的资源位置
+            // 确保这个资源位置已经在映射表中
+            return skinNameMap.get(name);
+        }
+
+        // 3. 尝试小写匹配
+        String lowerName = name.toLowerCase();
+        ResourceLocation lowerCaseMatch = skinNameMap.get(lowerName);
         if (lowerCaseMatch != null) {
-            LOGGER.debug("找到小写匹配的皮肤: {} -> {}", name, lowerCaseMatch);
+            LOGGER.info("✅ 小写匹配找到皮肤: {} -> {}", lowerName, lowerCaseMatch);
             return lowerCaseMatch;
         }
 
-        // 3. 如果是万用皮肤格式，尝试提取基本名称
-        if (isUniversalSkinName(name)) {
-            String baseName = extractBaseSkinName(name);
-            ResourceLocation baseMatch = skinNameMap.get(baseName);
-            if (baseMatch != null) {
-                LOGGER.debug("找到基础皮肤匹配: {} -> {}", name, baseMatch);
-                return baseMatch;
-            }
-        }
-
-        // 4. 尝试前缀匹配
-        for (Map.Entry<String, ResourceLocation> entry : skinNameMap.entrySet()) {
-            if (name.startsWith(entry.getKey()) || entry.getKey().startsWith(name)) {
-                LOGGER.debug("找到前缀匹配的皮肤: {} -> {}", name, entry.getValue());
-                return entry.getValue();
-            }
-        }
-
-        LOGGER.warn("未找到皮肤: {}, 使用随机皮肤", name);
-        return getRandomSkin();
+        LOGGER.warn("❌ 未找到皮肤: {}, 使用默认皮肤", name);
+        return getDefaultSkin();
     }
 
     /**
@@ -247,6 +299,57 @@ public class ResourcePackSkinLoader implements ResourceManagerReloadListener {
      * 检查皮肤是否存在
      */
     public boolean hasSkin(String name) {
-        return skinNameMap.containsKey(name);
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        
+        // 检查直接匹配
+        if (skinNameMap.containsKey(name)) {
+            return true;
+        }
+        
+        // 检查小写匹配
+        if (skinNameMap.containsKey(name.toLowerCase())) {
+            return true;
+        }
+        
+        // 检查外部皮肤特殊前缀
+        String externalKey = "external_" + name;
+        if (skinNameMap.containsKey(externalKey) || skinNameMap.containsKey(externalKey.toLowerCase())) {
+            return true;
+        }
+        
+        // 检查文件是否实际存在于外部皮肤目录
+        try {
+            Path skinFile = externalSkinDir.resolve(name + ".png");
+            if (Files.exists(skinFile) && Files.isRegularFile(skinFile)) {
+                return true;
+            }
+            // 尝试不带扩展名的文件名
+            skinFile = externalSkinDir.resolve(name);
+            return Files.exists(skinFile) && Files.isRegularFile(skinFile);
+        } catch (Exception e) {
+            LOGGER.error("检查皮肤文件存在性时出错: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 重新加载外部皮肤（用于指令调用）
+     */
+    public void reloadExternalSkins() {
+        LOGGER.info("重新加载外部皮肤...");
+
+        // 清除当前外部皮肤（使用正确的路径 skins/）
+        availableSkins.removeIf(loc -> loc.getPath().startsWith("skins/"));
+        skinNameMap.entrySet().removeIf(entry ->
+                entry.getValue().getPath().startsWith("skins/") ||
+                        entry.getKey().startsWith("external_")
+        );
+
+        // 重新加载外部皮肤
+        loadExternalSkins();
+
+        LOGGER.info("重新加载完成，现有 {} 个皮肤", availableSkins.size());
     }
 }

@@ -1,5 +1,6 @@
 package com.xiaoshi2022.everything_morph.Enchantment;
 
+import com.mojang.authlib.GameProfile;
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.ChatFormatting;
@@ -15,7 +16,9 @@ import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.UUID;
 
 @Mod.EventBusSubscriber(modid = EverythingMorphMod.MODID)
 public class MorphEnchantment extends Enchantment {
@@ -29,11 +32,8 @@ public class MorphEnchantment extends Enchantment {
         if (event.getSource().getEntity() instanceof Player player) {
             ItemStack weapon = player.getMainHandItem();
 
-            // 检查武器是否有化形附魔
             Map<Enchantment, Integer> enchantments = EnchantmentHelper.getEnchantments(weapon);
             if (enchantments.containsKey(EverythingMorphMod.MORPH_ENCHANTMENT.get())) {
-
-                // 防止重复召唤 - 检查附近是否已有相同武器的NPC
                 boolean hasExistingMorph = player.level().getEntitiesOfClass(
                         WeaponMorphEntity.class,
                         player.getBoundingBox().inflate(16.0),
@@ -42,17 +42,24 @@ public class MorphEnchantment extends Enchantment {
                 ).isEmpty();
 
                 if (hasExistingMorph) {
-                    // 召唤NPC
+                    // 生成随机玩家名
+                    String randomName = com.xiaoshi2022.everything_morph.util.RandomNameGenerator.getInstance().generateRandomPlayerName();
+
+                    // 使用随机玩家名创建GameProfile
+                    UUID nameBasedUUID = UUID.nameUUIDFromBytes(randomName.getBytes(StandardCharsets.UTF_8));
+                    GameProfile playerProfile = new GameProfile(nameBasedUUID, randomName);
+
                     WeaponMorphEntity morphEntity = WeaponMorphEntity.create(
                             player.level(),
                             getWeaponType(weapon),
-                            weapon.copy()
+                            weapon.copy(),
+                            playerProfile
                     );
                     morphEntity.setOwner(player);
                     morphEntity.moveTo(player.getX(), player.getY() + 1.0, player.getZ());
                     player.level().addFreshEntity(morphEntity);
 
-                    EverythingMorphMod.LOGGER.info("召唤化形NPC，武器: {}", weapon.getDisplayName().getString());
+                    EverythingMorphMod.LOGGER.info("召唤化形NPC，武器: {}, 名称: {}", weapon.getDisplayName().getString(), randomName);
                 }
             }
         }

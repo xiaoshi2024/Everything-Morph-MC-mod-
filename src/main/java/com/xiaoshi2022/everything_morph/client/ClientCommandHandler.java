@@ -35,5 +35,18 @@ public class ClientCommandHandler {
                     }
                     return 1;
                 }));
+
+        dispatcher.register(Commands.literal("everythingmorph")
+                .then(Commands.literal("reloadskins")
+                        .requires(source -> source.hasPermission(2))
+                        .executes(context -> {
+                            ResourcePackSkinLoader.getInstance().reloadExternalSkins();
+                            context.getSource().sendSuccess(() ->
+                                    Component.literal("成功重新加载外部皮肤"), false);
+                            return 1;
+                        })
+                )
+        );
+
     }
 }
