@@ -1,18 +1,15 @@
 package com.xiaoshi2022.everything_morph.entity;
 
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import com.mojang.logging.LogUtils;
 import com.xiaoshi2022.everything_morph.Network.NetworkHandler;
 import com.xiaoshi2022.everything_morph.Network.SkinUpdatePacket;
-import com.xiaoshi2022.everything_morph.client.ResourcePackSkinLoader;
+import com.xiaoshi2022.everything_morph.client.CSLIntegration;
+import com.xiaoshi2022.everything_morph.client.DefaultSkinProvider;
+import com.xiaoshi2022.everything_morph.client.SkinLoaderProxy;
 import com.xiaoshi2022.everything_morph.entity.Goal.FollowOwnerGoalSimple;
 import com.xiaoshi2022.everything_morph.entity.Goal.FollowOwnerHurtByTargetGoal;
 import com.xiaoshi2022.everything_morph.entity.Goal.FollowOwnerHurtTargetGoal;
 import com.xiaoshi2022.everything_morph.entity.Goal.PlaceBlockGoal;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.resources.DefaultPlayerSkin;
-import net.minecraft.client.resources.SkinManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -33,58 +30,53 @@ import net.minecraft.world.item.DiggerItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
-import net.minecraft.world.item.context.DirectionalPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.SkullBlockEntity;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.loading.FMLEnvironment;
 
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static com.xiaoshi2022.everything_morph.EverythingMorphMod.WEAPON_MORPH_ENTITY;
 
 public class WeaponMorphEntity extends PathfinderMob {
     private static final org.slf4j.Logger LOGGER = LogUtils.getLogger();
-    private final String weaponType;
+
     private Player owner;
     private ResourceLocation skinTexture;
     public SkinLoadState skinLoadState = SkinLoadState.NOT_LOADED;
-    private static final Random RANDOM = new Random();
-
     private ItemStack originalItem = ItemStack.EMPTY;
-
-    private ResourceLocation cachedSkin = null;
     private int blockCount = 64;
     private BlockPos lastPlayerPlacementPos;
     private int cooldown = 0;
 
-    private static final int MAX_SKIN_LOAD_RETRIES = 3;
-    private int skinLoadRetryCount = 0;
+    // 添加一个调试标志
+    private boolean debugNamePrinted = false;
 
-    // 添加基于UUID的皮肤字段
+    // 核心字段：从物品重命名获取的名称
+    private String customName;
     private UUID skinUUID;
     public boolean skinLoadedFromUUID = false;
 
-    // 添加字段
-    private boolean skinNeedsUpdate = false;
-
-    // 添加皮肤模式字段
-    private String skinPattern = "everything_morph:skins/{USERNAME}.png";
-
-    // 添加玩家名字段
-    private String playerName;
-
-    // 添加一个新的字段来存储指令设置的皮肤名
+    // 可选：指令设置的皮肤名
     public String customSkinName = null;
 
-    // 皮肤缓存
-    private static final Map<String, ResourceLocation> SKIN_CACHE = new ConcurrentHashMap<>();
+    // 皮肤缓存 - 只在客户端使用
+    private static final Map<String, ResourceLocation> SKIN_CACHE = FMLEnvironment.dist == Dist.CLIENT ?
+            new ConcurrentHashMap<>() : null;
+
+    // 添加这个无参构造函数
+    public WeaponMorphEntity(EntityType<? extends PathfinderMob> type, Level level) {
+        super(type, level);
+        // 不在这里设置 customName，等待从 NBT 读取
+        LOGGER.info("无参构造函数被调用 (客户端同步)");
+    }
 
     public static AttributeSupplier.Builder createAttributes() {
         return Mob.createMobAttributes()
@@ -95,337 +87,254 @@ public class WeaponMorphEntity extends PathfinderMob {
                 .add(Attributes.FOLLOW_RANGE, 32.0D);
     }
 
-    private GameProfile playerProfile;
-
-    // 修改构造函数
-    public WeaponMorphEntity(EntityType<? extends PathfinderMob> type, Level level, String weaponType, GameProfile playerProfile, String playerName) {
+    // 构造函数
+    public WeaponMorphEntity(EntityType<? extends PathfinderMob> type, Level level, String customName) {
         super(type, level);
-        this.weaponType = weaponType;
-        this.playerProfile = playerProfile;
-        this.playerName = playerName != null ? playerName : "default_player"; // 添加空值检查
-        this.skinTexture = DefaultPlayerSkin.getDefaultSkin();
-
-        // 使用玩家名生成UUID
-        this.skinUUID = UUID.nameUUIDFromBytes(this.playerName.getBytes(StandardCharsets.UTF_8));
+        this.customName = customName != null && !customName.isEmpty() ? customName : "Unnamed";
+        LOGGER.info("构造函数设置 customName = '{}'", this.customName); // 添加日志
+        this.skinUUID = UUID.nameUUIDFromBytes(this.customName.getBytes(StandardCharsets.UTF_8));
     }
 
-    // 添加设置自定义皮肤名的方法
-    // 在 setCustomSkinName 方法中添加检查
-    public void setCustomSkinName(String skinName) {
-        if (skinName == null || skinName.isEmpty()) {
-            LOGGER.warn("❌ 皮肤名称为空");
-            return;
+    public ResourceLocation getSkinTexture() {
+        if (skinLoadState == SkinLoadState.LOADED && skinTexture != null) {
+            return skinTexture;
         }
-        
-        // 特殊处理外部皮肤文件，尝试添加扩展名
-        String skinNameToCheck = skinName;
-        if (!skinName.endsWith(".png") && !skinName.endsWith(".svg")) {
-            // 尝试直接使用原始名称检查
-            if (!ResourcePackSkinLoader.getInstance().hasSkin(skinName)) {
-                // 如果原始名称不存在，尝试添加.png扩展名
-                skinNameToCheck = skinName + ".png";
-                if (!ResourcePackSkinLoader.getInstance().hasSkin(skinNameToCheck)) {
-                    // 如果.png也不存在，尝试添加.svg扩展名
-                    skinNameToCheck = skinName + ".svg";
-                    if (!ResourcePackSkinLoader.getInstance().hasSkin(skinNameToCheck)) {
-                        LOGGER.warn("❌ 皮肤不存在: {}", skinName);
-                        return;
-                    }
-                }
+        // 如果正在加载或失败，返回 null，让渲染器处理
+        return null;
+    }
+
+    // 工厂方法 - 从物品获取名称
+    public static WeaponMorphEntity create(Level level, ItemStack originalItem, Player owner) {
+        // 从物品的自定义名称获取玩家ID
+        String customName = getItemCustomName(originalItem);
+
+        // ✅ 添加日志
+        System.out.println("创建实体，customName = " + customName);
+
+        WeaponMorphEntity entity = new WeaponMorphEntity(WEAPON_MORPH_ENTITY.get(), level, customName);
+        entity.setOriginalItem(originalItem);
+        entity.setOwner(owner);
+        entity.applyItemStats(originalItem);
+
+        // 设置实体的显示名称
+        entity.setCustomName(Component.literal(customName));
+
+        LOGGER.info("创建化形实体: 名称={}, 来自物品={}, 物品ID={}",
+                customName, originalItem.getDisplayName().getString(), getRegistryName(originalItem.getItem()));
+
+        return entity;
+    }
+
+    private static String getItemCustomName(ItemStack item) {
+        if (item == null) return "default";
+
+        if (item.hasCustomHoverName()) {
+            String name = item.getHoverName().getString();
+            System.out.println("物品自定义名称: " + name);
+            return name;  // 直接返回原始名称，不做任何处理
+        }
+
+        String registryName = getRegistryName(item.getItem());
+        System.out.println("物品注册名: " + registryName);
+        return registryName != null ? registryName : "default";
+    }
+
+    // 获取物品注册名
+    public static String getRegistryName(net.minecraft.world.item.Item item) {
+        if (item == null) {
+            LOGGER.warn("getRegistryName 收到 null Item");
+            return "default";
+        }
+        try {
+            net.minecraft.resources.ResourceLocation registryName =
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item);
+            if (registryName != null) {
+                String path = registryName.getPath();
+                return path != null ? path : "default";
+            }
+        } catch (Exception e) {
+            LOGGER.error("获取物品注册名称失败: {}", e.getMessage());
+        }
+        return "default";
+    }
+
+    // 设置自定义皮肤名（通过指令）
+    public void setCustomSkinName(String skinName) {
+        // 只在客户端检查皮肤存在性
+        if (this.level().isClientSide) {
+            if (!SkinLoaderProxy.hasSkin(skinName)) {
+                LOGGER.warn("❌ 皮肤不存在: {}", skinName);
+                return;
             }
         }
 
         this.customSkinName = skinName;
         this.skinLoadedFromUUID = false;
         this.skinLoadState = SkinLoadState.NOT_LOADED;
-        this.skinNeedsUpdate = true; // 添加更新标志
-        LOGGER.info("设置自定义皮肤名: {}, 实际检查: {}", skinName, skinNameToCheck);
+        LOGGER.info("设置自定义皮肤名: {}", skinName);
 
-        // 立即尝试重新加载皮肤
         if (this.level().isClientSide) {
             this.loadSkinFromResourcePack();
-        } else {
-            // ✅ 服务端：立即换皮并广播
-            ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(skinName);
-            if (skin != null && !skin.getPath().contains("steve")) {
-                this.skinTexture = skin;
-                this.skinLoadState = SkinLoadState.LOADED;
-                this.skinLoadedFromUUID = true;
-                LOGGER.info("✅ 服务端直接换皮: {}", skin);
-                this.syncSkinToClient(); // 广播给所有跟踪玩家
-            }
         }
     }
 
-    // 新增方法：手动设置皮肤UUID
-    public void setSkinUUID(UUID skinUUID) {
-        this.skinUUID = skinUUID;
-        this.skinLoadedFromUUID = false;
-        this.skinLoadState = SkinLoadState.NOT_LOADED;
-        LOGGER.info("手动设置皮肤UUID: {}", skinUUID);
-    }
-
-    // 新增方法：手动设置皮肤UUID和玩家名
-    public void setSkinUUIDAndName(UUID skinUUID, String playerName) {
-        this.skinUUID = skinUUID;
-        this.playerName = playerName != null ? playerName : "Player";
-        this.skinLoadedFromUUID = false;
-        this.skinLoadState = SkinLoadState.NOT_LOADED;
-        LOGGER.info("手动设置皮肤UUID: {}, 玩家名: {}", skinUUID, playerName);
-    }
-
-    // 新增方法：强制重新加载皮肤
+    // 强制重新加载皮肤
     public void reloadSkin() {
         this.skinLoadedFromUUID = false;
         this.skinLoadState = SkinLoadState.NOT_LOADED;
         LOGGER.info("强制重新加载皮肤");
-    }
 
-    // 添加获取和设置皮肤模式的方法
-    public String getSkinPattern() {
-        return skinPattern;
-    }
-
-    // 在 setmorphskin 等相关指令中添加立即重载逻辑
-    public void setSkinPattern(String pattern) {
-        this.skinPattern = pattern;
-        this.skinLoadedFromUUID = false;
-        this.skinLoadState = SkinLoadState.NOT_LOADED;
-        LOGGER.info("设置皮肤模式: {}", pattern);
-
-        // 立即尝试重新加载皮肤
         if (this.level().isClientSide) {
             this.loadSkinFromResourcePack();
         }
     }
 
-    // 修改 loadSkinFromUUID 方法，支持模式化皮肤加载
-    public void loadSkinFromUUID() {
-        if (this.level().isClientSide && skinLoadState != SkinLoadState.LOADED && !skinLoadedFromUUID) {
-            LOGGER.debug("开始基于模式加载皮肤: {}", skinPattern);
+    public String determineSkinName() {
+        // 优先使用指令设置的皮肤名
+        if (customSkinName != null && !customSkinName.isEmpty()) {
+            LOGGER.info("使用自定义皮肤名: {}", customSkinName);
+            return customSkinName;
+        }
 
-            skinLoadState = SkinLoadState.LOADING;
+        // 直接从 customName 字段获取（这是最可靠的，因为它在构造时就已经设置）
+        if (this.customName != null && !this.customName.isEmpty() && !"default".equals(this.customName) && !"Unnamed".equals(this.customName)) {
+            LOGGER.info("使用 customName 字段: {}", this.customName);
+            return this.customName;
+        }
 
-            try {
-                // 处理占位符
-                String processedPattern = processSkinPattern(skinPattern);
-
-                // 使用资源包皮肤加载器获取皮肤
-                ResourcePackSkinLoader skinLoader = ResourcePackSkinLoader.getInstance();
-                ResourceLocation skinLocation;
-
-                // 检查是否是模式化路径（包含占位符）
-                if (processedPattern.contains("{") && processedPattern.contains("}")) {
-                    LOGGER.debug("检测到模式化皮肤路径: {}", processedPattern);
-                    // 对于模式化路径，直接使用资源包皮肤加载器
-                    skinLocation = skinLoader.getSkinByName(this.playerName);
-                } else {
-                    // 对于固定路径，创建资源位置
-                    skinLocation = new ResourceLocation(processedPattern);
-
-                    // 检查资源是否存在
-                    if (!Minecraft.getInstance().getResourceManager().getResource(skinLocation).isPresent()) {
-                        // 如果固定路径不存在，回退到使用玩家名查找
-                        skinLocation = skinLoader.getSkinByName(this.playerName);
-                    }
-                }
-
-                if (skinLocation != null && !skinLocation.getPath().contains("steve") &&
-                        !skinLocation.getPath().contains("default")) {
-                    skinTexture = skinLocation;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    LOGGER.info("✅ 成功加载皮肤: {}", skinLocation);
-
-                    // 缓存皮肤
-                    SKIN_CACHE.put(this.playerName, skinLocation);
-                } else {
-                    LOGGER.warn("无法找到合适的皮肤，使用默认皮肤");
-                    skinTexture = DefaultPlayerSkin.getDefaultSkin();
-                    skinLoadState = SkinLoadState.FAILED;
-                }
-            } catch (Exception e) {
-                LOGGER.warn("基于模式加载皮肤失败: {}", e.getMessage());
-                skinTexture = DefaultPlayerSkin.getDefaultSkin();
-                skinLoadState = SkinLoadState.FAILED;
+        // 尝试从实体的显示名称中获取（即使不是自定义名称）
+        Component displayNameComponent = super.getCustomName();
+        if (displayNameComponent != null) {
+            String displayName = displayNameComponent.getString();
+            LOGGER.info("从实体显示名称获取: {}", displayName);
+            if (displayName != null && !displayName.isEmpty() && !"default".equals(displayName) && !"Morph".equals(displayName)) {
+                return displayName;
             }
         }
+
+        // 如果 customName 为空但有自定义显示名称，尝试使用显示名称
+        if (this.hasCustomName()) {
+            String displayName = this.getCustomName().getString();
+            LOGGER.info("customName 为空，但显示名称为: {}", displayName);
+            if (displayName != null && !displayName.isEmpty() && !"default".equals(displayName) && !"Morph".equals(displayName)) {
+                return displayName;
+            }
+        }
+
+        // 如果 customName 是 "default" 或为空但有 originalItem，尝试从物品获取
+        if (originalItem != null && !originalItem.isEmpty()) {
+            if (originalItem.hasCustomHoverName()) {
+                String itemName = originalItem.getHoverName().getString();
+                LOGGER.info("从 originalItem 获取自定义名称: {}", itemName);
+                if (itemName != null && !itemName.isEmpty()) {
+                    return itemName;
+                }
+            } else {
+                String registryName = getRegistryName(originalItem.getItem());
+                LOGGER.info("从 originalItem 获取注册名: {}", registryName);
+                if (registryName != null && !registryName.isEmpty() && !"default".equals(registryName)) {
+                    return registryName;
+                }
+            }
+        }
+
+        // 直接从字段获取
+        String name = this.customName;
+        if (name == null || name.isEmpty()) {
+            LOGGER.warn("customName 为空！使用 'default'");
+            name = "default";
+        }
+
+        LOGGER.info("使用物品名作为皮肤名: '{}'", name);
+        return name;
     }
 
     public void loadSkinFromResourcePack() {
-        if (this.level().isClientSide) {
-            // 确保ResourcePackSkinLoader已初始化
-            ResourcePackSkinLoader skinLoader = ResourcePackSkinLoader.getInstance();
-            if (!skinLoader.isInitialized()) {
-                LOGGER.info("🔄 初始化ResourcePackSkinLoader...");
-                skinLoader.initialize();
+        if (!this.level().isClientSide) return;
+        if (skinLoadState == SkinLoadState.LOADING || skinLoadState == SkinLoadState.LOADED) return;
+
+        // 使用 determineSkinName() 方法获取正确的皮肤名
+        String skinNameToUse = determineSkinName();
+
+        LOGGER.info("🔍 开始为 '{}' 加载皮肤", skinNameToUse);
+
+        // 检查缓存
+        if (SKIN_CACHE != null && SKIN_CACHE.containsKey(skinNameToUse)) {
+            skinTexture = SKIN_CACHE.get(skinNameToUse);
+            skinLoadState = SkinLoadState.LOADED;
+            LOGGER.info("✅ 从缓存加载皮肤: {}", skinTexture);
+            syncSkinStateToServer();
+            return;
+        }
+
+        skinLoadState = SkinLoadState.LOADING;
+        syncSkinStateToServer();
+
+        try {
+            ResourceLocation skinLocation = null;
+
+            // 优先使用 CSL 获取皮肤
+            if (CSLIntegration.isAvailable()) {
+                skinLocation = CSLIntegration.getSkin(skinNameToUse);
             }
 
-            // 如果有自定义皮肤名，优先使用；否则使用玩家名
-            String skinNameToUse = (customSkinName != null) ? customSkinName : playerName;
-            LOGGER.info("🔍 开始从资源包加载皮肤: {}", skinNameToUse);
-
-            // 先检查缓存
-            if (SKIN_CACHE.containsKey(skinNameToUse)) {
-                ResourceLocation cachedSkin = SKIN_CACHE.get(skinNameToUse);
-                // 验证缓存皮肤是否仍然有效
-                if (isSkinValid(cachedSkin)) {
-                    skinTexture = cachedSkin;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    LOGGER.info("✅ 从缓存加载皮肤: {}", skinTexture);
-                    syncSkinStateToServer();
-                    return;
-                } else {
-                    // 缓存无效，移除
-                    SKIN_CACHE.remove(skinNameToUse);
-                    LOGGER.warn("❌ 缓存皮肤无效，重新加载: {}", cachedSkin);
+            if (skinLocation != null) {
+                skinTexture = skinLocation;
+                skinLoadState = SkinLoadState.LOADED;
+                LOGGER.info("✅ 从 CustomSkinLoader 成功加载皮肤: {}", skinLocation);
+                if (SKIN_CACHE != null) {
+                    SKIN_CACHE.put(skinNameToUse, skinLocation);
                 }
+            } else {
+                LOGGER.warn("❌ 未找到皮肤: {}, 将使用默认皮肤", skinNameToUse);
+                skinTexture = null;
+                skinLoadState = SkinLoadState.FAILED;
             }
 
-            skinLoadState = SkinLoadState.LOADING;
-            LOGGER.info("🔄 皮肤加载中...");
             syncSkinStateToServer();
 
-            try {
-                Set<String> allSkins = skinLoader.getAllSkinNames();
-                LOGGER.info("所有可用皮肤: {}", allSkins);
-
-                // 首先尝试精确匹配
-                ResourceLocation skinLocation = skinLoader.getSkinByName(skinNameToUse);
-                LOGGER.info("精确匹配结果: {} -> {}", skinNameToUse, skinLocation);
-
-                // 验证皮肤资源是否真实存在
-                if (skinLocation != null && isSkinValid(skinLocation)) {
-                    skinTexture = skinLocation;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    LOGGER.info("✅ 成功从资源包加载皮肤: {}", skinLocation);
-
-                    // 缓存皮肤
-                    SKIN_CACHE.put(skinNameToUse, skinLocation);
-                    syncSkinStateToServer();
-                    return;
-                }
-
-                // 如果找不到，尝试外部皮肤前缀
-                String externalSkinName = "external_" + skinNameToUse;
-                ResourceLocation externalSkin = skinLoader.getSkinByName(externalSkinName);
-                if (externalSkin != null && isSkinValid(externalSkin)) {
-                    LOGGER.info("✅ 找到外部皮肤: {} -> {}", externalSkinName, externalSkin);
-                    skinTexture = externalSkin;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    SKIN_CACHE.put(skinNameToUse, externalSkin);
-                    syncSkinStateToServer();
-                    return;
-                }
-
-                // 如果还是找不到，尝试小写匹配
-                String lowerName = skinNameToUse.toLowerCase();
-                ResourceLocation lowerCaseSkin = skinLoader.getSkinByName(lowerName);
-                if (lowerCaseSkin != null && isSkinValid(lowerCaseSkin)) {
-                    LOGGER.info("✅ 找到小写匹配皮肤: {} -> {}", lowerName, lowerCaseSkin);
-                    skinTexture = lowerCaseSkin;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    SKIN_CACHE.put(skinNameToUse, lowerCaseSkin);
-                    syncSkinStateToServer();
-                    return;
-                }
-
-                // 最后尝试万用皮肤格式
-                String universalName = "player_" + skinNameToUse.toLowerCase();
-                ResourceLocation universalSkin = skinLoader.getSkinByName(universalName);
-                if (universalSkin != null && isSkinValid(universalSkin)) {
-                    LOGGER.info("✅ 找到万用皮肤: {} -> {}", universalName, universalSkin);
-                    skinTexture = universalSkin;
-                    skinLoadState = SkinLoadState.LOADED;
-                    skinLoadedFromUUID = true;
-                    SKIN_CACHE.put(skinNameToUse, universalSkin);
-                    syncSkinStateToServer();
-                    return;
-                }
-
-                // 所有尝试都失败，使用默认皮肤
-                LOGGER.warn("❌ 资源包中没有找到有效皮肤: {}, 使用默认皮肤", skinNameToUse);
-                skinTexture = DefaultPlayerSkin.getDefaultSkin();
-                skinLoadState = SkinLoadState.FAILED;
-                syncSkinStateToServer();
-
-            } catch (Exception e) {
-                LOGGER.error("❌ 从资源包加载皮肤失败: {}", e.getMessage(), e);
-                skinTexture = DefaultPlayerSkin.getDefaultSkin();
-                skinLoadState = SkinLoadState.FAILED;
-                syncSkinStateToServer();
-            }
-        }
-    }
-
-    // 添加皮肤验证方法
-    private boolean isSkinValid(ResourceLocation skinLocation) {
-        try {
-            var resource = Minecraft.getInstance().getResourceManager().getResource(skinLocation);
-            if (resource.isPresent()) {
-                LOGGER.info("✅ 皮肤资源验证成功: {}", skinLocation);
-                return true;
-            } else {
-                LOGGER.warn("❌ 皮肤资源不存在: {}", skinLocation);
-                return false;
-            }
         } catch (Exception e) {
-            LOGGER.warn("❌ 检查皮肤资源时出错: {}", e.getMessage());
-            return false;
+            LOGGER.error("❌ 加载皮肤时发生异常: {}", e.getMessage());
+            skinTexture = null;
+            skinLoadState = SkinLoadState.FAILED;
+            syncSkinStateToServer();
         }
     }
-    // 添加同步皮肤状态到服务端的方法
+
+    // 辅助方法：检查是否为默认皮肤
+    private boolean isDefaultSkinLocation(ResourceLocation location) {
+        if (location == null) return true;
+        String path = location.getPath();
+        return path.contains("steve") || path.contains("alex") || path.contains("default");
+    }
+
+    // 辅助方法：检查是否为有效的玩家名（用于Mojang API）
+    private boolean isValidPlayerName(String name) {
+        return name != null &&
+                name.matches("^[a-zA-Z0-9_]{3,16}$") &&
+                !name.equals("default") &&
+                !name.equals("steve") &&
+                !name.equals("alex");
+    }
+
+    // 同步皮肤状态到服务端
+    // 同步皮肤状态到服务端
     private void syncSkinStateToServer() {
+        // 只在客户端执行
         if (this.level().isClientSide) {
-            // 发送皮肤状态更新包到服务端
             try {
+                // ✅ 修复：直接传递 skinTexture，允许为 null
                 NetworkHandler.INSTANCE.sendToServer(new SkinUpdatePacket(
                         this.getId(),
-                        this.skinTexture,
-                        this.skinLoadState.ordinal()
-                ));
-                LOGGER.debug("✅ 已发送皮肤状态到服务端: {}", this.skinLoadState);
+                        this.skinTexture,  // 可能为 null
+                        this.skinLoadState.ordinal()));
             } catch (Exception e) {
-                LOGGER.error("❌ 发送皮肤状态到服务端失败", e);
+                LOGGER.error("❌ 发送皮肤状态失败", e);
             }
         }
     }
 
-    // 添加处理皮肤模式的方法
-    private String processSkinPattern(String pattern) {
-        String result = pattern;
-
-        // 替换占位符
-        if (result.contains("{USERNAME}")) {
-            result = result.replace("{USERNAME}", this.playerName);
-        }
-
-        if (result.contains("{UUID}")) {
-            String uuidStr = this.skinUUID.toString().replace("-", "");
-            result = result.replace("{UUID}", uuidStr);
-        }
-
-        if (result.contains("{UUID_SHORT}")) {
-            String uuidShort = this.skinUUID.toString().substring(0, 8);
-            result = result.replace("{UUID_SHORT}", uuidShort);
-        }
-
-        if (result.contains("{ENTITY_ID}")) {
-            result = result.replace("{ENTITY_ID}", String.valueOf(this.getId()));
-        }
-
-        return result;
-    }
-
-    // 添加获取玩家名的方法
-    public String getPlayerName() {
-        return this.playerName;
-    }
-
+    // 其他方法保持不变...
     public int getBlockCount() {
         return blockCount;
     }
@@ -437,119 +346,10 @@ public class WeaponMorphEntity extends PathfinderMob {
         }
     }
 
-    public static WeaponMorphEntity create(Level level, String weaponType, ItemStack originalItem, GameProfile playerProfile) {
-        // 生成随机玩家名
-        String randomName = com.xiaoshi2022.everything_morph.util.RandomNameGenerator.getInstance().generateRandomPlayerName();
-        WeaponMorphEntity entity = new WeaponMorphEntity(WEAPON_MORPH_ENTITY.get(), level, weaponType, playerProfile, randomName);
-        entity.setOriginalItem(originalItem);
-        entity.applyItemStats(originalItem);
-        return entity;
-    }
-
     public void recordPlayerPlacement(BlockPos pos) {
         this.lastPlayerPlacementPos = pos;
         this.cooldown = 0;
         LOGGER.debug("实体 {} 记录玩家放置位置: {}", this.getId(), pos);
-    }
-
-    private boolean trySmartBlockPlacement(BlockItem blockItem) {
-        if (owner == null || lastPlayerPlacementPos == null || blockCount <= 0) {
-            return false;
-        }
-
-        BlockPos targetPos = analyzePlayerPlacementPattern();
-        if (targetPos == null) {
-            targetPos = findSymmetricPlacementPosition();
-        }
-
-        if (targetPos == null || !canPlaceBlockAt(targetPos)) {
-            return false;
-        }
-
-        Direction placementDirection = determineBestPlacementDirection(targetPos);
-
-        try {
-            BlockPlaceContext context = new BlockPlaceContext(
-                    new UseOnContext(level(), null, InteractionHand.MAIN_HAND,
-                            originalItem, new BlockHitResult(
-                            Vec3.atCenterOf(targetPos), placementDirection, targetPos, false))
-            );
-
-            var result = blockItem.place(context);
-            if (result.consumesAction()) {
-                setBlockCount(blockCount - 1);
-                LOGGER.debug("智能放置成功，位置: {}, 方向: {}, 剩余方块: {}",
-                        targetPos, placementDirection, blockCount);
-
-                if (level() instanceof ServerLevel serverLevel) {
-                    serverLevel.sendParticles(ParticleTypes.HAPPY_VILLAGER,
-                            targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5,
-                            5, 0.2, 0.2, 0.2, 0.1);
-                }
-
-                cooldown = 20;
-                return true;
-            }
-        } catch (Exception e) {
-            LOGGER.error("智能放置失败", e);
-        }
-
-        return false;
-    }
-
-    private BlockPos analyzePlayerPlacementPattern() {
-        if (owner == null || lastPlayerPlacementPos == null) {
-            return null;
-        }
-
-        BlockPos playerPos = owner.blockPosition();
-        BlockPos lastPlacement = lastPlayerPlacementPos;
-        Vec3 toLastPlacement = Vec3.atCenterOf(lastPlacement).subtract(Vec3.atCenterOf(playerPos));
-        Direction primaryDirection = getPrimaryDirection(toLastPlacement);
-        return predictNextPosition(lastPlacement, primaryDirection);
-    }
-
-    private Direction getPrimaryDirection(Vec3 displacement) {
-        double absX = Math.abs(displacement.x());
-        double absY = Math.abs(displacement.y());
-        double absZ = Math.abs(displacement.z());
-
-        if (absX > absY && absX > absZ) {
-            return displacement.x() > 0 ? Direction.EAST : Direction.WEST;
-        } else if (absZ > absX && absZ > absY) {
-            return displacement.z() > 0 ? Direction.SOUTH : Direction.NORTH;
-        } else {
-            return displacement.y() > 0 ? Direction.UP : Direction.DOWN;
-        }
-    }
-
-    private BlockPos predictNextPosition(BlockPos lastPos, Direction direction) {
-        if (owner != null) {
-            Direction playerFacing = owner.getDirection();
-            if (playerFacing.getAxis() == direction.getAxis()) {
-                return lastPos.relative(direction);
-            }
-            return lastPos.relative(playerFacing);
-        }
-        return lastPos.relative(direction);
-    }
-
-    private Direction determineBestPlacementDirection(BlockPos targetPos) {
-        if (owner != null) {
-            return owner.getDirection();
-        }
-        return Direction.UP;
-    }
-
-    private void dieFromBlockExhaustion() {
-        if (!this.level().isClientSide) {
-            if (level() instanceof ServerLevel serverLevel) {
-                serverLevel.sendParticles(ParticleTypes.CLOUD,
-                        getX(), getY() + 0.5, getZ(),
-                        20, 0.3, 0.3, 0.3, 0.1);
-            }
-            this.discard();
-        }
     }
 
     private void applyItemStats(ItemStack item) {
@@ -593,21 +393,15 @@ public class WeaponMorphEntity extends PathfinderMob {
     @Override
     public void addAdditionalSaveData(CompoundTag compound) {
         super.addAdditionalSaveData(compound);
-        compound.putString("PlayerName", playerName);
-        compound.putString("SkinPattern", skinPattern);
+        compound.putString("CustomName", customName);
         compound.putInt("BlockCount", blockCount);
         compound.put("OriginalItem", originalItem.save(new CompoundTag()));
-
-        // 保存UUID用于皮肤加载
         compound.putUUID("SkinUUID", skinUUID);
         compound.putBoolean("SkinLoaded", skinLoadedFromUUID);
 
-        // 保存自定义皮肤名
         if (customSkinName != null) {
             compound.putString("CustomSkinName", customSkinName);
         }
-
-        // 保存皮肤纹理和状态（服务端需要这些信息）
         if (skinTexture != null) {
             compound.putString("SkinTexture", skinTexture.toString());
         }
@@ -618,59 +412,44 @@ public class WeaponMorphEntity extends PathfinderMob {
     public void readAdditionalSaveData(CompoundTag compound) {
         super.readAdditionalSaveData(compound);
 
-        if (compound.contains("SkinPattern")) {
-            skinPattern = compound.getString("SkinPattern");
-        }
+        LOGGER.info("readAdditionalSaveData 开始");
+        LOGGER.info("当前 customName = '{}'", this.customName);
 
-        if (compound.contains("PlayerName")) {
-            playerName = compound.getString("PlayerName");
+        if (compound.contains("CustomName")) {
+            String oldName = this.customName;
+            this.customName = compound.getString("CustomName");
+            LOGGER.info("从 NBT 读取 CustomName: '{}' (之前是 '{}')", this.customName, oldName);
+        } else {
+            LOGGER.info("NBT 中没有 CustomName，保持当前值: '{}'", this.customName);
         }
 
         if (compound.contains("BlockCount")) {
             blockCount = compound.getInt("BlockCount");
         }
-
         if (compound.contains("OriginalItem")) {
             this.originalItem = ItemStack.of(compound.getCompound("OriginalItem"));
             applyItemStats(this.originalItem);
         }
-
-        // 加载UUID
         if (compound.contains("SkinUUID")) {
             skinUUID = compound.getUUID("SkinUUID");
             skinLoadedFromUUID = compound.getBoolean("SkinLoaded");
         } else {
-            // 如果没有保存的UUID，使用实体UUID
             skinUUID = this.getUUID();
         }
-
-        // 加载自定义皮肤名
         if (compound.contains("CustomSkinName")) {
             customSkinName = compound.getString("CustomSkinName");
         }
 
-        // 在数据加载完成后，重新加载皮肤（只在客户端）
         if (this.level().isClientSide) {
             this.skinLoadState = SkinLoadState.NOT_LOADED;
             this.skinLoadedFromUUID = false;
-
-            // 使用客户端调度器而不是服务端
-            net.minecraft.client.Minecraft.getInstance().execute(() -> {
-                if (this.isAlive()) {
-                    this.loadSkinFromResourcePack();
-                }
-            });
         } else {
-            // 服务端：从NBT恢复皮肤状态
             if (compound.contains("SkinTexture")) {
                 String texturePath = compound.getString("SkinTexture");
-                this.skinTexture = ResourceLocation.tryParse(texturePath);
+                this.skinTexture = new ResourceLocation(texturePath);
             }
             if (compound.contains("SkinLoadState")) {
-                int stateOrdinal = compound.getInt("SkinLoadState");
-                if (stateOrdinal >= 0 && stateOrdinal < SkinLoadState.values().length) {
-                    this.skinLoadState = SkinLoadState.values()[stateOrdinal];
-                }
+                this.skinLoadState = SkinLoadState.values()[compound.getInt("SkinLoadState")];
             }
         }
     }
@@ -684,7 +463,6 @@ public class WeaponMorphEntity extends PathfinderMob {
 
         this.targetSelector.addGoal(1, new FollowOwnerHurtByTargetGoal(this));
         this.targetSelector.addGoal(2, new FollowOwnerHurtTargetGoal(this));
-        // 移除了NearestAttackableTargetGoal，使NPC不再主动攻击任何生物
     }
 
     @Override
@@ -722,48 +500,32 @@ public class WeaponMorphEntity extends PathfinderMob {
         if (this.hasCustomName()) {
             return super.getDisplayName();
         }
-        // 使用随机生成的玩家名作为显示名称
-        return Component.literal(this.playerName);
+        return Component.literal(this.customName);
     }
 
     public void setOwner(Player owner) {
         this.owner = owner;
     }
 
-    public ResourceLocation getSkinTexture() {
-        // 客户端：如果皮肤未加载，尝试加载
-        if (this.level().isClientSide && skinLoadState != SkinLoadState.LOADED && !skinLoadedFromUUID) {
-            loadSkinFromResourcePack();
+    public void setSkinTexture(ResourceLocation texture) {
+        this.skinTexture = texture;
+        if (texture != null && !texture.equals(DefaultSkinProvider.getDefaultSkin())) {
+            this.skinLoadState = SkinLoadState.LOADED;
         }
-
-        if (skinTexture != null && skinLoadState == SkinLoadState.LOADED) {
-            return skinTexture;
-        }
-        return DefaultPlayerSkin.getDefaultSkin();
     }
 
-    // 添加设置皮肤状态的方法（服务端调用）
     public void setSkinLoadState(SkinLoadState state) {
         this.skinLoadState = state;
-    }
-
-    private void syncSkinToClient() {
-        if (this.skinTexture != null && !this.level().isClientSide) {
-            NetworkHandler.sendToAllTrackingWithRetry(this,
-                    new SkinUpdatePacket(this.getId(), this.skinTexture, this.skinLoadState.ordinal()));
-        }
     }
 
     @Override
     public void tick() {
         super.tick();
 
-        // 冷却时间计数
         if (cooldown > 0) {
             cooldown--;
         }
 
-        // 智能方块放置
         if (!level().isClientSide && cooldown == 0 && lastPlayerPlacementPos != null) {
             if (originalItem.getItem() instanceof BlockItem blockItem) {
                 if (trySmartBlockPlacement(blockItem)) {
@@ -772,26 +534,51 @@ public class WeaponMorphEntity extends PathfinderMob {
             }
         }
 
-        // 检查皮肤是否需要更新
-        if (skinNeedsUpdate && skinLoadState == SkinLoadState.LOADED) {
-            skinNeedsUpdate = false;
-            // 通知渲染器皮肤已更新
-            this.setSkinTexture(this.skinTexture);
-        }
-
-        // 客户端皮肤加载逻辑 - 只在需要时加载
-        if (this.level().isClientSide && skinLoadState == SkinLoadState.NOT_LOADED && !skinLoadedFromUUID) {
-            loadSkinFromResourcePack();
+        if (this.level().isClientSide) {
+            if (skinLoadState == SkinLoadState.NOT_LOADED && !skinLoadedFromUUID) {
+                loadSkinFromResourcePack();
+            }
         }
     }
 
-    /**
-     * 确保皮肤已加载，如果未加载则立即尝试加载
-     */
-    public void ensureSkinLoaded() {
-        if (this.level().isClientSide && skinLoadState == SkinLoadState.NOT_LOADED && !skinLoadedFromUUID) {
-            loadSkinFromResourcePack();
+    private boolean trySmartBlockPlacement(BlockItem blockItem) {
+        if (owner == null || lastPlayerPlacementPos == null || blockCount <= 0) {
+            return false;
         }
+
+        BlockPos targetPos = findSymmetricPlacementPosition();
+        if (targetPos == null || !canPlaceBlockAt(targetPos)) {
+            return false;
+        }
+
+        Direction placementDirection = owner.getDirection();
+
+        try {
+            BlockPlaceContext context = new BlockPlaceContext(
+                    new UseOnContext(level(), null, InteractionHand.MAIN_HAND,
+                            originalItem, new BlockHitResult(
+                            Vec3.atCenterOf(targetPos), placementDirection, targetPos, false))
+            );
+
+            var result = blockItem.place(context);
+            if (result.consumesAction()) {
+                setBlockCount(blockCount - 1);
+                LOGGER.debug("放置成功，位置: {}", targetPos);
+
+                if (level() instanceof ServerLevel serverLevel) {
+                    serverLevel.sendParticles(ParticleTypes.HAPPY_VILLAGER,
+                            targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5,
+                            5, 0.2, 0.2, 0.2, 0.1);
+                }
+
+                cooldown = 20;
+                return true;
+            }
+        } catch (Exception e) {
+            LOGGER.error("智能放置失败", e);
+        }
+
+        return false;
     }
 
     private BlockPos findSymmetricPlacementPosition() {
@@ -811,34 +598,14 @@ public class WeaponMorphEntity extends PathfinderMob {
                 level().isEmptyBlock(pos.above());
     }
 
-    private void tryAttackNearby() {
-        AABB area = new AABB(this.blockPosition()).inflate(2.0D);
-        List<LivingEntity> targets = level().getEntitiesOfClass(LivingEntity.class, area,
-                e -> e != this && e != owner && e.isAlive());
-
-        if (!targets.isEmpty()) {
-            LivingEntity target = targets.get(0);
-            float damage = (float) EnchantmentHelper.getDamageBonus(originalItem, target.getMobType());
-            target.hurt(damageSources().mobAttack(this), damage);
-        }
-    }
-
-    public void setSkinTexture(ResourceLocation texture) {
-        this.skinTexture = texture;
-        if (texture != null && !texture.toString().equals("textures/entity/steve.png")) {
-            this.skinLoadState = SkinLoadState.LOADED;
-            if (!this.level().isClientSide) {
-                syncSkinToClient();
+    private void dieFromBlockExhaustion() {
+        if (!this.level().isClientSide) {
+            if (level() instanceof ServerLevel serverLevel) {
+                serverLevel.sendParticles(ParticleTypes.CLOUD,
+                        getX(), getY() + 0.5, getZ(),
+                        20, 0.3, 0.3, 0.3, 0.1);
             }
-        }
-    }
-
-    private void tryPlaceBlock(BlockItem blockItem) {
-        BlockPos targetPos = this.blockPosition().relative(this.getDirection());
-        Level level = this.level();
-
-        if (level.getBlockState(targetPos).isAir()) {
-            blockItem.place(new DirectionalPlaceContext(level, targetPos, Direction.DOWN, originalItem, Direction.UP));
+            this.discard();
         }
     }
 
@@ -858,15 +625,24 @@ public class WeaponMorphEntity extends PathfinderMob {
         return this.skinUUID;
     }
 
-    public enum SkinLoadState {
-        NOT_LOADED, LOADING, LOADED, FAILED
+    public String getPlayerName() {
+        return this.customName;
     }
 
-    /**
-     * 调试方法：获取实体信息
-     */
-    public String getDebugInfo() {
-        return String.format("ID: %d, SkinState: %s, Skin: %s, UUID: %s, LoadedFromUUID: %b",
-                this.getId(), skinLoadState, skinTexture, skinUUID, skinLoadedFromUUID);
+    @Override
+    public Component getCustomName() {
+        // 确保不会返回 null
+        if (customName != null && !customName.isEmpty()) {
+            return Component.literal(customName);
+        }
+        return Component.literal("Morph");
+    }
+
+    public String getCustomNameString() {
+        return this.customName;
+    }
+
+    public enum SkinLoadState {
+        NOT_LOADED, LOADING, LOADED, FAILED
     }
 }

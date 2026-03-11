@@ -63,6 +63,13 @@ description='''${mod_description}'''
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
+# 在 src/main/resources/META-INF/mods.toml 中添加
+[[dependencies.${mod_id}]]
+modId="customskinloader"
+mandatory=false  # 可选依赖，没有 CSL 时使用默认皮肤
+versionRange="[14.13,)"
+ordering="AFTER"
+side="CLIENT"
 
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't

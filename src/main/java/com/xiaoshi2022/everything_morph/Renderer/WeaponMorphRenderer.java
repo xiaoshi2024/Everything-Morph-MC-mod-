@@ -1,70 +1,51 @@
 package com.xiaoshi2022.everything_morph.Renderer;
 
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.minecraft.MinecraftProfileTexture;
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
-import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
-import net.minecraft.client.renderer.entity.player.PlayerRenderer;
 import net.minecraft.client.resources.DefaultPlayerSkin;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-
-import java.util.UUID;
+import org.slf4j.Logger;
+import com.mojang.logging.LogUtils;
 
 public class WeaponMorphRenderer extends LivingEntityRenderer<WeaponMorphEntity, WeaponMorphModel> {
-
-    private final PlayerRenderer playerRenderer;
+    private static final Logger LOGGER = LogUtils.getLogger();
 
     public WeaponMorphRenderer(EntityRendererProvider.Context context) {
         super(context, new WeaponMorphModel(context.bakeLayer(WeaponMorphModel.LAYER_LOCATION)), 0.5F);
-        this.playerRenderer = new PlayerRenderer(context, false); // 使用Steve模型
     }
 
     @Override
     public ResourceLocation getTextureLocation(WeaponMorphEntity entity) {
-        // 直接使用实体的皮肤纹理
-        ResourceLocation skin = entity.getSkinTexture();
-        if (skin != null) {
-            return skin;
+        // 如果已加载，使用自定义皮肤
+        if (entity.getSkinLoadState() == WeaponMorphEntity.SkinLoadState.LOADED) {
+            ResourceLocation skin = entity.getSkinTexture();
+            if (skin != null) {
+                return skin;
+            }
         }
 
-        // 回退到默认皮肤
-        return DefaultPlayerSkin.getDefaultSkin();
+        // 如果正在加载或失败，直接使用 UUID 对应的默认皮肤
+        return DefaultPlayerSkin.getDefaultSkin(entity.getUUID());
     }
 
     @Override
     public void render(WeaponMorphEntity entity, float entityYaw, float partialTicks,
-                       com.mojang.blaze3d.vertex.PoseStack poseStack,
-                       net.minecraft.client.renderer.MultiBufferSource buffer, int packedLight) {
-
-        // 如果皮肤已加载，使用自定义渲染
-        if (entity.getSkinLoadState() == WeaponMorphEntity.SkinLoadState.LOADED &&
-                entity.getSkinTexture() != null) {
+                       PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
+        try {
             super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
-        } else {
-            // 否则使用玩家渲染器（避免闪烁）
-            renderAsPlayer(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
+        } catch (Exception e) {
+            LOGGER.error("渲染实体时出错: {}", e.getMessage());
         }
     }
 
-    private void renderAsPlayer(WeaponMorphEntity entity, float entityYaw, float partialTicks,
-                                com.mojang.blaze3d.vertex.PoseStack poseStack,
-                                net.minecraft.client.renderer.MultiBufferSource buffer, int packedLight) {
-        // 创建临时GameProfile
-        GameProfile profile = new GameProfile(UUID.randomUUID(), "WeaponMorph");
-
-        // 使用玩家渲染器渲染
-        net.minecraft.client.player.RemotePlayer fakePlayer = new net.minecraft.client.player.RemotePlayer(
-                Minecraft.getInstance().level, profile
-        );
-
-        fakePlayer.setPos(entity.getX(), entity.getY(), entity.getZ());
-        fakePlayer.setYRot(entity.getYRot());
-        fakePlayer.setXRot(entity.getXRot());
-        fakePlayer.yBodyRot = entity.yBodyRot;
-        fakePlayer.yHeadRot = entity.yHeadRot;
-
-        playerRenderer.render(fakePlayer, entityYaw, partialTicks, poseStack, buffer, packedLight);
+    @Override
+    protected void renderNameTag(WeaponMorphEntity entity, Component component,
+                                 PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
+        // 什么都不做，完全禁用名称标签渲染
+        // 这个方法体为空，就不会渲染名称标签
     }
 }

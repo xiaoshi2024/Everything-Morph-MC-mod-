@@ -1,7 +1,6 @@
 package com.xiaoshi2022.everything_morph.event;
 
 import com.mojang.logging.LogUtils;
-import com.xiaoshi2022.everything_morph.Enchantment.FlySwordEnchantment;
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
 import com.xiaoshi2022.everything_morph.entity.FlyingSwordEntity;
 import net.minecraft.world.entity.player.Player;

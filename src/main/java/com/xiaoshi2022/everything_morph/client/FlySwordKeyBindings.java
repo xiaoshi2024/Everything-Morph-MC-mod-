@@ -2,14 +2,17 @@ package com.xiaoshi2022.everything_morph.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.client.settings.KeyConflictContext;
 import net.minecraftforge.client.settings.KeyModifier;
-import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
 
-@Mod.EventBusSubscriber(bus = Mod.EventBusSubscriber.Bus.MOD)
+@OnlyIn(Dist.CLIENT)  // 关键：标记整个类为只在客户端可用
+@Mod.EventBusSubscriber(modid = "everything_morph", value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
 public class FlySwordKeyBindings {
     public static KeyMapping flySwordDown;
     public static KeyMapping flySwordAttack;

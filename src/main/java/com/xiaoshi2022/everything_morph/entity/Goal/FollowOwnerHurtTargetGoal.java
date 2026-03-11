@@ -4,7 +4,6 @@ import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.goal.target.TargetGoal;
 import net.minecraft.world.entity.player.Player;
-import java.util.function.Predicate;
 
 /** 主人打谁，我就打谁 */
 public class FollowOwnerHurtTargetGoal extends TargetGoal {

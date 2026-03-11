@@ -1,78 +1,52 @@
 package com.xiaoshi2022.everything_morph;
 
-import com.mojang.authlib.GameProfile;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.logging.LogUtils;
-import com.xiaoshi2022.everything_morph.Enchantment.MorphEnchantment;
 import com.xiaoshi2022.everything_morph.Enchantment.FlySwordEnchantment;
+import com.xiaoshi2022.everything_morph.Enchantment.MorphEnchantment;
 import com.xiaoshi2022.everything_morph.Network.NetworkHandler;
-import com.xiaoshi2022.everything_morph.Network.SkinUpdatePacket;
+import com.xiaoshi2022.everything_morph.Renderer.FlyingSwordRenderer;
 import com.xiaoshi2022.everything_morph.Renderer.WeaponMorphModel;
 import com.xiaoshi2022.everything_morph.Renderer.WeaponMorphRenderer;
-import com.xiaoshi2022.everything_morph.Renderer.FlyingSwordRenderer;
 import com.xiaoshi2022.everything_morph.client.FlySwordKeyBindings;
-import com.xiaoshi2022.everything_morph.client.ResourcePackSkinLoader;
-import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import com.xiaoshi2022.everything_morph.entity.FlyingSwordEntity;
-import net.minecraft.client.Minecraft;
+import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.client.model.geom.builders.CubeDeformation;
 import net.minecraft.client.renderer.entity.EntityRenderers;
-import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.PathPackResources;
-import net.minecraft.server.packs.metadata.pack.PackMetadataSection;
 import net.minecraft.server.packs.repository.Pack;
-import net.minecraft.server.packs.repository.PackCompatibility;
 import net.minecraft.server.packs.repository.PackSource;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.MobCategory;
-import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.item.*;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentCategory;
-
-import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.AABB;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
-import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.AddPackFindersEvent;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
-import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
 import org.slf4j.Logger;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.*;
 
 // The value here should match an entry in the META-INF/mods.toml file
 @Mod(EverythingMorphMod.MODID)
@@ -98,8 +72,8 @@ public class EverythingMorphMod
 
     public static final RegistryObject<EntityType<WeaponMorphEntity>> WEAPON_MORPH_ENTITY =
             ENTITIES.register("weapon_morph_entity",
-                    () -> EntityType.Builder.of((EntityType.EntityFactory<WeaponMorphEntity>)
-                                            (type, level) -> new WeaponMorphEntity(type, level, "weapon", new GameProfile(UUID.randomUUID(), "default_player"), null),
+                    () -> EntityType.Builder.<WeaponMorphEntity>of(
+                                    WeaponMorphEntity::new,  // 使用方法引用，而不是lambda
                                     MobCategory.CREATURE)
                             .sized(0.6F, 1.8F)
                             .build("weapon_morph_entity"));
@@ -136,7 +110,7 @@ public class EverythingMorphMod
 
     // 创建带有指定附魔的附魔书物品栈
     // 创建带有指定附魔的附魔书物品栈
-    private static ItemStack createEnchantedBookStack(Enchantment enchantment) {
+    static ItemStack createEnchantedBookStack(Enchantment enchantment) {
         // 使用 EnchantedBookItem 的静态方法创建附魔书
         ItemStack book = new ItemStack(Items.ENCHANTED_BOOK);
 
@@ -202,482 +176,8 @@ public class EverythingMorphMod
         // Some common setup code
         NetworkHandler.register();
         LOGGER.info("万物化形 - 通用设置完成");
-
-        // 在 commonSetup 方法中添加
-        event.enqueueWork(() -> {
-            // 注册调试命令
-            MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
-        });
     }
 
-
-// 在 EverythingMorphMod.java 中修改 onRegisterCommands 方法
-
-    private void onRegisterCommands(RegisterCommandsEvent event) {
-
-        event.getDispatcher().register(
-                Commands.literal("morphinfo")
-                        .executes(ctx -> {
-                            ServerPlayer player = ctx.getSource().getPlayer();
-                            if (player != null) {
-                                // 获取玩家周围的所有 WeaponMorphEntity
-                                List<WeaponMorphEntity> morphs = player.level().getEntitiesOfClass(
-                                        WeaponMorphEntity.class,
-                                        player.getBoundingBox().inflate(10.0),
-                                        entity -> entity.getOwner() == player
-                                );
-
-                                if (morphs.isEmpty()) {
-                                    ctx.getSource().sendFailure(Component.literal("❌ 你周围没有化形实体"));
-                                    return 0;
-                                }
-
-                                for (WeaponMorphEntity morph : morphs) {
-                                    String info = String.format("实体ID: %d, 名称: %s, 皮肤状态: %s",
-                                            morph.getId(),
-                                            morph.getDisplayName().getString(),
-                                            morph.getSkinLoadState().toString());
-                                    ctx.getSource().sendSuccess(() -> Component.literal(info), false);
-                                }
-                                return 1;
-                            }
-                            return 0;
-                        })
-        );
-
-
-        event.getDispatcher().register(
-                Commands.literal("setmorphskin")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("id", IntegerArgumentType.integer())
-                                .then(Commands.argument("skin_pattern", StringArgumentType.string())
-                                        .executes(ctx -> {
-                                            ServerPlayer player = ctx.getSource().getPlayer();
-                                            int entityId = IntegerArgumentType.getInteger(ctx, "id");
-                                            String skinPattern = StringArgumentType.getString(ctx, "skin_pattern");
-
-                                            Level level = player.level();
-                                            Entity entity = level.getEntity(entityId);
-
-                                            if (entity instanceof WeaponMorphEntity morph) {
-                                                // 使用占位符替换
-                                                String finalPattern = replacePlaceholders(skinPattern, morph);
-                                                morph.setSkinPattern(finalPattern);
-                                                morph.reloadSkin();
-
-                                                ctx.getSource().sendSuccess(
-                                                        () -> Component.literal("✅ 已设置实体 " + entityId + " 的皮肤模式为: " + finalPattern),
-                                                        false
-                                                );
-                                                return 1;
-                                            } else {
-                                                ctx.getSource().sendFailure(
-                                                        Component.literal("❌ 实体 " + entityId + " 不是 WeaponMorphEntity 或不存在")
-                                                );
-                                                return 0;
-                                            }
-                                        })
-                                )
-                        )
-        );
-
-        // 给指定实体设置皮肤UUID和玩家名
-        event.getDispatcher().register(
-                Commands.literal("setmorphskinwithname")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("id", IntegerArgumentType.integer())
-                                .then(Commands.argument("uuid", StringArgumentType.string())
-                                        .then(Commands.argument("name", StringArgumentType.string())
-                                                .executes(ctx -> {
-                                                    ServerPlayer player = ctx.getSource().getPlayer();
-                                                    int entityId = IntegerArgumentType.getInteger(ctx, "id");
-                                                    String uuidString = StringArgumentType.getString(ctx, "uuid");
-                                                    String playerName = StringArgumentType.getString(ctx, "name");
-
-                                                    Level level = player.level();
-                                                    Entity entity = level.getEntity(entityId);
-
-                                                    if (entity instanceof WeaponMorphEntity morph) {
-                                                        try {
-                                                            UUID skinUUID = UUID.fromString(uuidString);
-                                                            morph.setSkinUUIDAndName(skinUUID, playerName);
-                                                            morph.reloadSkin();
-                                                            ctx.getSource().sendSuccess(
-                                                                    () -> Component.literal("✅ 已设置实体 " + entityId + " 的皮肤UUID为: " + skinUUID + ", 玩家名: " + playerName),
-                                                                    false
-                                                            );
-                                                            return 1;
-                                                        } catch (IllegalArgumentException e) {
-                                                            ctx.getSource().sendFailure(
-                                                                    Component.literal("❌ 无效的UUID格式: " + uuidString)
-                                                            );
-                                                            return 0;
-                                                        }
-                                                    } else {
-                                                        ctx.getSource().sendFailure(
-                                                                Component.literal("❌ 实体 " + entityId + " 不是 WeaponMorphEntity 或不存在")
-                                                        );
-                                                        return 0;
-                                                    }
-                                                })
-                                        )
-                                )
-                        )
-        );
-
-        event.getDispatcher().register(Commands.literal("debugmorph")
-                .requires(source -> source.hasPermission(2))
-                .executes(context -> {
-                    ServerPlayer player = context.getSource().getPlayer();
-                    if (player != null) {
-                        // 使用正确的方法创建附魔书
-                        ItemStack enchantedBook = createEnchantedBookStack(MORPH_ENCHANTMENT.get());
-                        player.addItem(enchantedBook);
-
-                        context.getSource().sendSuccess(() ->
-                                Component.literal("给了你一本武器化形附魔书"), false);
-                    }
-                    return 1;
-                }));
-
-        // 添加飞行剑测试命令 - 同样需要修复
-        event.getDispatcher().register(Commands.literal("debugflysword")
-                .requires(source -> source.hasPermission(2))
-                .executes(context -> {
-                    ServerPlayer player = context.getSource().getPlayer();
-                    if (player != null) {
-                        // 使用正确的方法创建附魔书
-                        ItemStack enchantedBook = createEnchantedBookStack(FLY_SWORD_ENCHANTMENT.get());
-                        player.addItem(enchantedBook);
-
-                        context.getSource().sendSuccess(() ->
-                                Component.literal("给了你一本飞行剑附魔书"), false);
-                    }
-                    return 1;
-                }));
-
-        // 在 onRegisterCommands 方法中添加
-        event.getDispatcher().register(Commands.literal("summonmorph")
-                .requires(source -> source.hasPermission(2))
-                .executes(context -> {
-                    ServerPlayer player = context.getSource().getPlayer();
-                    if (player != null) {
-                        ItemStack heldItem = player.getMainHandItem();
-                        if (heldItem.isEmpty()) {
-                            context.getSource().sendFailure(Component.literal("请手持一个物品"));
-                            return 0;
-                        }
-
-                        // 获取玩家的 GameProfile
-                        GameProfile playerProfile = player.getGameProfile();
-
-                        WeaponMorphEntity morphEntity = WeaponMorphEntity.create(
-                                player.level(),
-                                getWeaponType(heldItem),
-                                heldItem.copy(),
-                                playerProfile // 传递玩家的 GameProfile
-                        );
-                        morphEntity.setOwner(player);
-                        morphEntity.moveTo(player.getX(), player.getY() + 1.0, player.getZ());
-                        player.level().addFreshEntity(morphEntity);
-
-                        context.getSource().sendSuccess(() ->
-                                        Component.literal("成功召唤化形NPC，物品: " + heldItem.getDisplayName().getString()),
-                                false
-                        );
-                        return 1;
-                    }
-                    return 0;
-                }));
-
-        // 添加皮肤调试命令
-        event.getDispatcher().register(
-                Commands.literal("debugskin")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("skin_name", StringArgumentType.string())
-                                .executes(ctx -> {
-                                    String skinName = StringArgumentType.getString(ctx, "skin_name");
-                                    ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(skinName);
-
-                                    ctx.getSource().sendSuccess(
-                                            () -> Component.literal("皮肤查找结果: " + skinName + " -> " + skin),
-                                            false
-                                    );
-                                    return 1;
-                                })
-                        )
-        );
-
-        // 在指令注册中添加调试指令
-        event.getDispatcher().register(
-                Commands.literal("debugskininfo")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("id", IntegerArgumentType.integer())
-                                .executes(ctx -> {
-                                    ServerPlayer player = ctx.getSource().getPlayer();
-                                    int entityId = IntegerArgumentType.getInteger(ctx, "id");
-
-                                    Level level = player.level();
-                                    Entity entity = level.getEntity(entityId);
-
-                                    if (entity instanceof WeaponMorphEntity morph) {
-                                        String debugInfo = String.format(
-                                                "实体ID: %d, 名称: %s, 自定义皮肤名: %s, 状态: %s, 皮肤纹理: %s, 已加载: %b",
-                                                morph.getId(),
-                                                morph.getPlayerName(),
-                                                morph.customSkinName != null ? morph.customSkinName : "null",
-                                                morph.getSkinLoadState(),
-                                                morph.getSkinTexture(),
-                                                morph.skinLoadedFromUUID
-                                        );
-
-                                        ctx.getSource().sendSuccess(() -> Component.literal(debugInfo), false);
-                                        return 1;
-                                    } else {
-                                        ctx.getSource().sendFailure(Component.literal("❌ 实体不存在"));
-                                        return 0;
-                                    }
-                                })
-                        )
-        );
-
-// 修改 setexternalskin 指令
-        event.getDispatcher().register(
-                Commands.literal("setexternalskin")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("id", IntegerArgumentType.integer())
-                                .then(Commands.argument("skin_name", StringArgumentType.string())
-                                        .executes(ctx -> {
-                                            try {
-                                                ServerPlayer player = ctx.getSource().getPlayer();
-                                                if (player == null) {
-                                                    ctx.getSource().sendFailure(Component.literal("❌ 只有玩家可以执行此命令"));
-                                                    return 0;
-                                                }
-
-                                                int entityId = IntegerArgumentType.getInteger(ctx, "id");
-                                                String skinName = StringArgumentType.getString(ctx, "skin_name");
-
-                                                Level level = player.level();
-                                                Entity entity = level.getEntity(entityId);
-
-                                                if (entity instanceof WeaponMorphEntity morph) {
-                                                    LOGGER.info("开始设置皮肤: 实体 {} -> 皮肤 {}", entityId, skinName);
-
-                                                    // 设置自定义皮肤名
-                                                    morph.setCustomSkinName(skinName);
-
-                                                    // 强制重新加载皮肤（在服务端设置状态）
-                                                    morph.skinLoadState = WeaponMorphEntity.SkinLoadState.NOT_LOADED;
-                                                    morph.skinLoadedFromUUID = false;
-
-                                                    ctx.getSource().sendSuccess(
-                                                            () -> Component.literal("✅ 已设置实体 " + entityId + " 使用外部皮肤: " + skinName),
-                                                            false
-                                                    );
-                                                    return 1;
-                                                } else {
-                                                    ctx.getSource().sendFailure(
-                                                            Component.literal("❌ 实体 " + entityId + " 不是 WeaponMorphEntity 或不存在")
-                                                    );
-                                                    return 0;
-                                                }
-                                            } catch (Exception e) {
-                                                LOGGER.error("setexternalskin 指令执行错误", e);
-                                                ctx.getSource().sendFailure(
-                                                        Component.literal("❌ 命令执行错误: " + e.getMessage())
-                                                );
-                                                return 0;
-                                            }
-                                        })
-                                )
-                        )
-        );
-
-        // 添加皮肤验证命令
-        event.getDispatcher().register(
-                Commands.literal("validateskin")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("skin_name", StringArgumentType.string())
-                                .executes(ctx -> {
-                                    String skinName = StringArgumentType.getString(ctx, "skin_name");
-                                    ResourceLocation skin = ResourcePackSkinLoader.getInstance().getSkinByName(skinName);
-
-                                    // 验证皮肤
-                                    boolean isValid = false;
-                                    try {
-                                        var resource = Minecraft.getInstance().getResourceManager().getResource(skin);
-                                        isValid = resource.isPresent();
-                                    } catch (Exception e) {
-                                        isValid = false;
-                                    }
-
-                                    boolean finalIsValid = isValid;
-                                    ctx.getSource().sendSuccess(
-                                            () -> Component.literal("皮肤验证: " + skinName + " -> " + skin + " (有效: " + finalIsValid + ")"),
-                                            false
-                                    );
-                                    return 1;
-                                })
-                        )
-        );
-
-// 3. 使用玩家名自动匹配皮肤指令
-        event.getDispatcher().register(
-                Commands.literal("setplayername")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("id", IntegerArgumentType.integer())
-                                .then(Commands.argument("player_name", StringArgumentType.string())
-                                        .executes(ctx -> {
-                                            ServerPlayer player = ctx.getSource().getPlayer();
-                                            int entityId = IntegerArgumentType.getInteger(ctx, "id");
-                                            String playerName = StringArgumentType.getString(ctx, "player_name");
-
-                                            Level level = player.level();
-                                            Entity entity = level.getEntity(entityId);
-
-                                            if (entity instanceof WeaponMorphEntity morph) {
-                                                // 设置玩家名，皮肤加载器会自动匹配对应的皮肤文件
-                                                morph.setSkinUUIDAndName(
-                                                        UUID.nameUUIDFromBytes(playerName.getBytes(StandardCharsets.UTF_8)),
-                                                        playerName
-                                                );
-                                                morph.reloadSkin();
-
-                                                ctx.getSource().sendSuccess(
-                                                        () -> Component.literal("✅ 已设置实体 " + entityId + " 的玩家名为: " + playerName + "，将自动匹配皮肤"),
-                                                        false
-                                                );
-                                                return 1;
-                                            } else {
-                                                ctx.getSource().sendFailure(
-                                                        Component.literal("❌ 实体 " + entityId + " 不是 WeaponMorphEntity 或不存在")
-                                                );
-                                                return 0;
-                                            }
-                                        })
-                                )
-                        )
-        );
-
-// 4. 重新加载所有皮肤指令
-        event.getDispatcher().register(
-                Commands.literal("reloadmorphskins")
-                        .requires(src -> src.hasPermission(2))
-                        .executes(ctx -> {
-                            // 重新加载资源包皮肤
-                            if (ctx.getSource().getLevel().isClientSide()) {
-                                ResourcePackSkinLoader.getInstance().reloadExternalSkins();
-                            }
-
-                            // 重新加载所有实体的皮肤
-                            List<WeaponMorphEntity> allMorphs = ctx.getSource().getLevel()
-                                    .getEntitiesOfClass(WeaponMorphEntity.class, new AABB(-30000000, -256, -30000000, 30000000, 256, 30000000));
-
-                            for (WeaponMorphEntity morph : allMorphs) {
-                                morph.reloadSkin();
-                            }
-
-                            ctx.getSource().sendSuccess(
-                                    () -> Component.literal("✅ 已重新加载 " + allMorphs.size() + " 个化形实体的皮肤"),
-                                    false
-                            );
-                            return 1;
-                        })
-        );
-
-// 5. 查看可用皮肤列表指令
-        event.getDispatcher().register(
-                Commands.literal("listmorphskins")
-                        .requires(src -> src.hasPermission(2))
-                        .executes(ctx -> {
-                            if (ctx.getSource().getLevel().isClientSide()) {
-                                ResourcePackSkinLoader skinLoader = ResourcePackSkinLoader.getInstance();
-                                Set<String> skinNames = skinLoader.getAllSkinNames();
-
-                                ctx.getSource().sendSuccess(
-                                        () -> Component.literal("✅ 可用皮肤列表 (" + skinNames.size() + " 个):"),
-                                        false
-                                );
-
-                                // 分页显示皮肤名称
-                                List<String> skinList = new ArrayList<>(skinNames);
-                                Collections.sort(skinList);
-
-                                for (int i = 0; i < Math.min(20, skinList.size()); i++) {
-                                    String skinName = skinList.get(i);
-                                    ctx.getSource().sendSuccess(
-                                            () -> Component.literal("§7- §e" + skinName),
-                                            false
-                                    );
-                                }
-
-                                if (skinList.size() > 20) {
-                                    ctx.getSource().sendSuccess(
-                                            () -> Component.literal("§7... 还有 " + (skinList.size() - 20) + " 个皮肤未显示"),
-                                            false
-                                    );
-                                }
-
-                                return 1;
-                            }
-                            return 0;
-                        })
-        );
-
-// 在 EverythingMorphMod.java 的 onRegisterCommands 方法末尾添加帮助命令
-        event.getDispatcher().register(
-                Commands.literal("morphhelp")
-                        .executes(ctx -> {
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§6===== §e万物化形模组使用说明 §6====="), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/morphinfo §7- 查看周围的化形实体信息"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/summonmorph §7- 召唤手持物品的化形实体"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/setmorphskin <实体ID> <皮肤模式> §7- 设置实体皮肤模式"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§e可用占位符: {USERNAME}, {UUID}, {UUID_SHORT}, {ENTITY_ID}"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§e示例: /setmorphskin 123 textures/entity/skins/{USERNAME}.png"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/setexternalskin <实体ID> <皮肤名> §7- 使用外部皮肤文件夹中的皮肤"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§e示例: /setexternalskin 123 dio (使用 config/everything_morph/skins/dio.png)"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/setplayername <实体ID> <玩家名> §7- 设置玩家名并自动匹配皮肤"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/listmorphskins §7- 查看所有可用皮肤列表"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/reloadmorphskins §7- 重新加载所有皮肤"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/debugmorph §7- 获取武器化形附魔书"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§a/debugflysword §7- 获取飞行剑附魔书"), false);
-
-                            ctx.getSource().sendSuccess(() ->
-                                    Component.literal("§6=================================="), false);
-
-                            return 1;
-                        })
-        );
-
-    }
-
-    // 添加辅助方法处理占位符
     // 添加辅助方法处理占位符
     private static String replacePlaceholders(String pattern, WeaponMorphEntity entity) {
         String result = pattern;
@@ -779,16 +279,7 @@ public class EverythingMorphMod
                 // 注册键位绑定
                 FlySwordKeyBindings.init();
 
-                // 初始化外部皮肤加载器
-                ResourcePackSkinLoader.getInstance().initialize();
             });
-        }
-
-        // 注册资源重载监听器 - 使用 Forge 的正确事件
-        @SubscribeEvent
-        public static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
-            event.registerReloadListener(ResourcePackSkinLoader.getInstance());
-            LOGGER.info("注册了皮肤资源重载监听器");
         }
 
         // 注册模型层的事件 - 使用正确的事件类型

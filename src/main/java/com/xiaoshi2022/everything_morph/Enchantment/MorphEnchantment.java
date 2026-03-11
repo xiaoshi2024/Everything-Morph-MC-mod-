@@ -1,14 +1,12 @@
 package com.xiaoshi2022.everything_morph.Enchantment;
 
-import com.mojang.authlib.GameProfile;
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.*;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentCategory;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
@@ -16,9 +14,7 @@ import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
-import java.util.UUID;
 
 @Mod.EventBusSubscriber(modid = EverythingMorphMod.MODID)
 public class MorphEnchantment extends Enchantment {
@@ -26,7 +22,7 @@ public class MorphEnchantment extends Enchantment {
         super(rarity, category, slots);
     }
 
-    // 添加事件监听 - 当实体造成伤害时触发
+    // 当实体造成伤害时触发
     @SubscribeEvent
     public static void onLivingDamage(LivingDamageEvent event) {
         if (event.getSource().getEntity() instanceof Player player) {
@@ -42,35 +38,21 @@ public class MorphEnchantment extends Enchantment {
                 ).isEmpty();
 
                 if (hasExistingMorph) {
-                    // 生成随机玩家名
-                    String randomName = com.xiaoshi2022.everything_morph.util.RandomNameGenerator.getInstance().generateRandomPlayerName();
-
-                    // 使用随机玩家名创建GameProfile
-                    UUID nameBasedUUID = UUID.nameUUIDFromBytes(randomName.getBytes(StandardCharsets.UTF_8));
-                    GameProfile playerProfile = new GameProfile(nameBasedUUID, randomName);
-
+                    // 使用物品的自定义名称，如果没有则使用物品注册名
                     WeaponMorphEntity morphEntity = WeaponMorphEntity.create(
                             player.level(),
-                            getWeaponType(weapon),
                             weapon.copy(),
-                            playerProfile
+                            player
                     );
                     morphEntity.setOwner(player);
                     morphEntity.moveTo(player.getX(), player.getY() + 1.0, player.getZ());
                     player.level().addFreshEntity(morphEntity);
 
-                    EverythingMorphMod.LOGGER.info("召唤化形NPC，武器: {}, 名称: {}", weapon.getDisplayName().getString(), randomName);
+                    EverythingMorphMod.LOGGER.info("召唤化形NPC，武器: {}, 名称: {}",
+                            weapon.getDisplayName().getString(), morphEntity.getCustomNameString());
                 }
             }
         }
-    }
-
-    // 根据物品类型获取武器类型
-    private static String getWeaponType(ItemStack itemStack) {
-        if (itemStack.getItem() instanceof SwordItem) return "sword";
-        if (itemStack.getItem() instanceof DiggerItem) return "tool";
-        if (itemStack.getItem() instanceof BlockItem) return "block";
-        return "weapon";
     }
 
     @Override
@@ -86,12 +68,9 @@ public class MorphEnchantment extends Enchantment {
 
     @Override
     public boolean checkCompatibility(Enchantment other) {
-        // 如果是同类型的化形附魔，不允许共存
         if (other instanceof MorphEnchantment) {
             return false;
         }
-
-        // 对于其他附魔，允许共存（修复铁毡问题）
         return true;
     }
 
@@ -130,7 +109,6 @@ public class MorphEnchantment extends Enchantment {
         return super.getMinCost(level) + 50;
     }
 
-    // 允许任何物品都可以附魔
     @Override
     public boolean canEnchant(ItemStack stack) {
         return true;

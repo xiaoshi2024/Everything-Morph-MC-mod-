@@ -1,18 +1,14 @@
 package com.xiaoshi2022.everything_morph.Network;
 
 import com.xiaoshi2022.everything_morph.EverythingMorphMod;
-import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
-import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.simple.SimpleChannel;
-import net.minecraftforge.fml.ModList;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class NetworkHandler {

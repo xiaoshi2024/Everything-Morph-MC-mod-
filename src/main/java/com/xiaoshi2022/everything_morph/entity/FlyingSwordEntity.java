@@ -1,6 +1,7 @@
 package com.xiaoshi2022.everything_morph.entity;
 
 import com.mojang.logging.LogUtils;
+import com.xiaoshi2022.everything_morph.client.FlySwordKeyBindings;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
@@ -18,7 +19,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
-import com.xiaoshi2022.everything_morph.client.FlySwordKeyBindings;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.network.NetworkHooks;
 
@@ -176,7 +176,7 @@ public class FlyingSwordEntity extends PathfinderMob {
 
         super.tick();
 
-        // 客户端处理控制
+        // 客户端处理控制 - 只在客户端执行
         if (level().isClientSide) {
             this.updateClientControls();
         }
@@ -185,11 +185,21 @@ public class FlyingSwordEntity extends PathfinderMob {
     @OnlyIn(Dist.CLIENT)
     protected void updateClientControls() {
         if (this.isControlledByLocalInstance()) {
-            // 使用空格键上升
-            this.up(net.minecraft.client.Minecraft.getInstance().options.keyJump.isDown());
-            // 使用自定义键位下降
-            this.down(FlySwordKeyBindings.flySwordDown.isDown());
+            // 使用安全的代理方法
+            this.up(isJumpKeyDown());
+            this.down(isFlySwordDownKeyDown());
         }
+    }
+
+    // 添加客户端代理方法
+    @OnlyIn(Dist.CLIENT)
+    private boolean isJumpKeyDown() {
+        return net.minecraft.client.Minecraft.getInstance().options.keyJump.isDown();
+    }
+
+    @OnlyIn(Dist.CLIENT)
+    private boolean isFlySwordDownKeyDown() {
+        return FlySwordKeyBindings.flySwordDown.isDown();
     }
 
     private boolean up() {
