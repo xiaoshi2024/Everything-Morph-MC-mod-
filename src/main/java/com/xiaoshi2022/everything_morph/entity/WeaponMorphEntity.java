@@ -19,6 +19,7 @@ import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -254,7 +255,7 @@ public class WeaponMorphEntity extends PathfinderMob {
         if (skinLoadState == SkinLoadState.LOADING || skinLoadState == SkinLoadState.LOADED) return;
 
         // 使用 determineSkinName() 方法获取正确的皮肤名
-        String skinNameToUse = determineSkinName();
+        final String skinNameToUse = determineSkinName();
 
         LOGGER.info("🔍 开始为 '{}' 加载皮肤", skinNameToUse);
 
@@ -270,35 +271,48 @@ public class WeaponMorphEntity extends PathfinderMob {
         skinLoadState = SkinLoadState.LOADING;
         syncSkinStateToServer();
 
-        try {
-            ResourceLocation skinLocation = null;
+        // 使用异步线程加载皮肤
+        Thread skinLoadThread = new Thread(() -> {
+            try {
+                final ResourceLocation skinLocation;
 
-            // 优先使用 CSL 获取皮肤
-            if (CSLIntegration.isAvailable()) {
-                skinLocation = CSLIntegration.getSkin(skinNameToUse);
-            }
-
-            if (skinLocation != null) {
-                skinTexture = skinLocation;
-                skinLoadState = SkinLoadState.LOADED;
-                LOGGER.info("✅ 从 CustomSkinLoader 成功加载皮肤: {}", skinLocation);
-                if (SKIN_CACHE != null) {
-                    SKIN_CACHE.put(skinNameToUse, skinLocation);
+                // 优先使用 CSL 获取皮肤
+                if (CSLIntegration.isAvailable()) {
+                    skinLocation = CSLIntegration.getSkin(skinNameToUse);
+                } else {
+                    skinLocation = null;
                 }
-            } else {
-                LOGGER.warn("❌ 未找到皮肤: {}, 将使用默认皮肤", skinNameToUse);
-                skinTexture = null;
-                skinLoadState = SkinLoadState.FAILED;
+
+                // 在主线程中更新皮肤状态
+                net.minecraft.client.Minecraft.getInstance().execute(() -> {
+                    if (skinLocation != null) {
+                        skinTexture = skinLocation;
+                        skinLoadState = SkinLoadState.LOADED;
+                        LOGGER.info("✅ 从 CustomSkinLoader 成功加载皮肤: {}", skinLocation);
+                        if (SKIN_CACHE != null) {
+                            SKIN_CACHE.put(skinNameToUse, skinLocation);
+                        }
+                    } else {
+                        LOGGER.warn("❌ 未找到皮肤: {}, 将使用默认皮肤", skinNameToUse);
+                        skinTexture = null;
+                        skinLoadState = SkinLoadState.FAILED;
+                    }
+                    syncSkinStateToServer();
+                });
+
+            } catch (Exception e) {
+                LOGGER.error("❌ 加载皮肤时发生异常: {}", e.getMessage());
+                // 在主线程中更新错误状态
+                net.minecraft.client.Minecraft.getInstance().execute(() -> {
+                    skinTexture = null;
+                    skinLoadState = SkinLoadState.FAILED;
+                    syncSkinStateToServer();
+                });
             }
+        });
 
-            syncSkinStateToServer();
-
-        } catch (Exception e) {
-            LOGGER.error("❌ 加载皮肤时发生异常: {}", e.getMessage());
-            skinTexture = null;
-            skinLoadState = SkinLoadState.FAILED;
-            syncSkinStateToServer();
-        }
+        skinLoadThread.setDaemon(true);
+        skinLoadThread.start();
     }
 
     // 辅助方法：检查是否为默认皮肤
@@ -361,10 +375,17 @@ public class WeaponMorphEntity extends PathfinderMob {
         } else if (item.getItem() instanceof DiggerItem tool) {
             getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(tool.getAttackDamage() + 1.0D);
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(15.0D + tool.getAttackDamage() * 3);
-        } else if (item.getItem() instanceof BlockItem) {
-            getAttribute(Attributes.MAX_HEALTH).setBaseValue(30.0D);
-            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(2.0D);
-            getAttribute(Attributes.ARMOR).setBaseValue(5.0D);
+        } else if (item.getItem() instanceof BlockItem blockItem) {
+            // 获取方块硬度
+            float hardness = blockItem.getBlock().defaultBlockState().getDestroySpeed(null, null);
+            // 根据硬度计算属性
+            double health = 20.0D + hardness * 10.0D;
+            double damage = 1.0D + hardness * 2.0D;
+            double armor = hardness * 1.5D;
+            
+            getAttribute(Attributes.MAX_HEALTH).setBaseValue(health);
+            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(damage);
+            getAttribute(Attributes.ARMOR).setBaseValue(armor);
         }
 
         setHealth((float) getAttributeValue(Attributes.MAX_HEALTH));
@@ -636,6 +657,21 @@ public class WeaponMorphEntity extends PathfinderMob {
             return Component.literal(customName);
         }
         return Component.literal("Morph");
+    }
+
+    @Override
+    public ItemStack getMainHandItem() {
+        // 手持原始物品
+        return this.originalItem;
+    }
+
+    @Override
+    public void die(DamageSource source) {
+        super.die(source);
+        // 死亡时掉落原始物品
+        if (!this.level().isClientSide && !originalItem.isEmpty()) {
+            this.spawnAtLocation(originalItem.copy());
+        }
     }
 
     public String getCustomNameString() {
