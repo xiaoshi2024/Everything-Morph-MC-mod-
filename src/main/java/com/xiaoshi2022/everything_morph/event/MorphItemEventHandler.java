@@ -25,8 +25,8 @@ import org.slf4j.Logger;
 public class MorphItemEventHandler {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static boolean summonKeyWasDown = false;
-    private static int lastEntitySpawnTime = 0;
-    private static final int SPAWN_COOLDOWN = 20; // 1秒冷却（20 ticks）
+    private static long lastEntitySpawnTime = 0;
+    private static final long SPAWN_COOLDOWN = 20; // 1秒冷却（20 ticks）
 
     @SubscribeEvent
     @OnlyIn(Dist.CLIENT)  // 添加这个注解确保只在客户端执行
@@ -83,7 +83,7 @@ public class MorphItemEventHandler {
             // 发送数据包到服务器端执行实际逻辑
             sendSummonPacket(player, stack, hasMorph, hasFlySword);
 
-            lastEntitySpawnTime = (int) currentTime;
+            lastEntitySpawnTime = currentTime;
         }
 
         summonKeyWasDown = summonKeyDown;
@@ -92,34 +92,22 @@ public class MorphItemEventHandler {
     @OnlyIn(Dist.CLIENT)
     private static void sendSummonPacket(Player player, ItemStack stack, boolean hasMorph, boolean hasFlySword) {
         if (player.level().isClientSide) {
-            // 使用静态方法检查是否为局域网世界或单人模式
-            if (isSinglePlayer()) {
-                // 单机模式：直接调用
-                if (hasMorph && hasFlySword) {
-                    spawnSmartFlyingSwordServer(player, stack);
-                } else if (hasMorph) {
-                    spawnMorphEntityServer(player, stack);
-                } else if (hasFlySword) {
-                    spawnFlyingSwordServer(player, stack);
-                }
-            } else {
-                // 联机模式：发送网络包（带配置的重试机制）
-                try {
-                    NetworkHandler.sendToServer(new SummonMorphPacket(stack, hasMorph, hasFlySword));
-                    LOGGER.debug("已发送召唤网络包到服务器（重试次数: {}, 重试延迟: {}ms）",
-                            Config.networkRetryCount, Config.networkRetryDelay);
+            // 统一发送网络包，无论是单人还是联机模式
+            try {
+                NetworkHandler.sendToServer(new SummonMorphPacket(stack, hasMorph, hasFlySword));
+                LOGGER.debug("已发送召唤网络包到服务器（重试次数: {}, 重试延迟: {}ms）",
+                        Config.networkRetryCount, Config.networkRetryDelay);
 
-                    player.displayClientMessage(
-                            Component.literal("§a📦 已发送召唤请求到服务器..."),
-                            true
-                    );
-                } catch (Exception e) {
-                    LOGGER.error("发送网络包时出错: {}", e.getMessage());
-                    player.displayClientMessage(
-                            Component.literal("§c❌ 网络包发送失败: " + e.getMessage()),
-                            true
-                    );
-                }
+                player.displayClientMessage(
+                        Component.literal("§a📦 已发送召唤请求到服务器..."),
+                        true
+                );
+            } catch (Exception e) {
+                LOGGER.error("发送网络包时出错: {}", e.getMessage());
+                player.displayClientMessage(
+                        Component.literal("§c❌ 网络包发送失败: " + e.getMessage()),
+                        true
+                );
             }
         }
     }
@@ -127,9 +115,13 @@ public class MorphItemEventHandler {
     @OnlyIn(Dist.CLIENT)
     private static boolean isSinglePlayer() {
         try {
-            return net.minecraft.client.Minecraft.getInstance().isSingleplayer();
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            boolean isSingle = mc.isSingleplayer();
+            LOGGER.debug("单人游戏检测: {}", isSingle);
+            return isSingle;
         } catch (NoClassDefFoundError | Exception e) {
             // 如果在服务器环境，返回 false
+            LOGGER.debug("单人游戏检测出错: {}", e.getMessage());
             return false;
         }
     }
