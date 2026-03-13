@@ -1,21 +1,22 @@
 {
-  "enchantment.everything_morph.morph": "変身",
-  "enchantment.everything_morph.morph.desc": "使用時にカスタムエンティティへ変身できる能力を付与します。",
-  "enchantment.everything_morph.fly_sword": "飛翔剣",
-  "enchantment.everything_morph.fly_sword.desc": "使用すると、乗って移動できる飛翔剣を召喚します。",
-  "key.everything_morph.fly_sword_down": "下降",
-  "key.everything_morph.fly_sword_attack": "剣のビームを発射",
-  "key.everything_morph.summon_morph": "変身召喚",
+  "enchantment.everything_morph.morph": "モーフ",
+  "enchantment.everything_morph.morph.desc": "使用時にカスタムエンティティに変身する能力を付与します。",
+  "enchantment.everything_morph.fly_sword": "フライングソード",
+  "enchantment.everything_morph.fly_sword.desc": "使用時に乗ることができる飛ぶ剣を召喚します。",
+  "key.everything_morph.fly_sword_down": "降下",
+  "key.everything_morph.summon_morph": "モーフ召喚",
   "key.categories.everything_morph": "Everything Morph",
-  "itemGroup.everything_morph.morph_tab": "万物化形",
+  "itemGroup.everything_morph.morph_tab": "Everything Morph",
+
   "config.everything_morph.enable_skin_cache": "スキンキャッシュを有効化",
   "config.everything_morph.skin_cache_size": "スキンキャッシュサイズ (MB)",
-  "config.everything_morph.skin_download_timeout": "スキンダウンロードのタイムアウト (秒)",
+  "config.everything_morph.skin_download_timeout": "スキンダウンロードタイムアウト (秒)",
   "config.everything_morph.skin_retry_count": "スキン再試行回数",
-  "config.everything_morph.skin_retry_delay": "スキン再試行の遅延 (ms)",
-  "config.everything_morph.enable_skin_cache.tooltip": "スキンキャッシュを有効にし、パフォーマンスを向上させます。",
-  "config.everything_morph.skin_cache_size.tooltip": "スキンキャッシュの最大サイズ（MB）。0は無制限を意味します。",
-  "config.everything_morph.skin_download_timeout.tooltip": "スキンダウンロードのタイムアウト時間（秒）。",
-  "config.everything_morph.skin_retry_count.tooltip": "スキン読み込みの再試行回数。",
-  "config.everything_morph.skin_retry_delay.tooltip": "スキン読み込み再試行の遅延時間（ミリ秒）。"
+  "config.everything_morph.skin_retry_delay": "スキン再試行遅延 (ms)",
+
+  "config.everything_morph.enable_skin_cache.tooltip": "パフォーマンス向上のためスキンキャッシュを有効にします",
+  "config.everything_morph.skin_cache_size.tooltip": "最大スキンキャッシュサイズ（MB）（0は無制限）",
+  "config.everything_morph.skin_download_timeout.tooltip": "スキンダウンロードのタイムアウト時間（秒）",
+  "config.everything_morph.skin_retry_count.tooltip": "スキン読み込みの再試行回数",
+  "config.everything_morph.skin_retry_delay.tooltip": "スキン読み込み再試行の遅延時間（ミリ秒）"
 }
