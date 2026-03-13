@@ -27,6 +27,11 @@ public class WeaponMorphModel extends HumanoidModel<WeaponMorphEntity> {
 
     public WeaponMorphModel(ModelPart root) {
         super(root);
+        // 调试：检查手臂部件是否正确初始化
+        System.out.println("WeaponMorphModel constructed");
+        System.out.println("rightArm: " + this.rightArm);
+        System.out.println("leftArm: " + this.leftArm);
+        System.out.println("root: " + root);
     }
 
     /**
@@ -64,5 +69,11 @@ public class WeaponMorphModel extends HumanoidModel<WeaponMorphEntity> {
     public void setupAnim(WeaponMorphEntity entity, float limbSwing, float limbSwingAmount, float ageInTicks, float netHeadYaw, float headPitch) {
         // 根据实体状态设置动画
         super.setupAnim(entity, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch);
+        
+        // 设置手臂姿态为 ITEM，这样 ItemInHandLayer 才会渲染手持物品
+        if (!entity.getMainHandItem().isEmpty()) {
+            this.rightArmPose = HumanoidModel.ArmPose.ITEM;
+            this.leftArmPose = HumanoidModel.ArmPose.ITEM;
+        }
     }
 }

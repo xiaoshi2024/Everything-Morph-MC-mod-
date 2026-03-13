@@ -16,6 +16,9 @@ public class WeaponMorphRenderer extends LivingEntityRenderer<WeaponMorphEntity,
 
     public WeaponMorphRenderer(EntityRendererProvider.Context context) {
         super(context, new WeaponMorphModel(context.bakeLayer(WeaponMorphModel.LAYER_LOCATION)), 0.5F);
+        System.out.println("WeaponMorphRenderer: Adding ItemInHandLayer");
+        this.addLayer(new WeaponMorphItemInHandLayer(this, context.getItemInHandRenderer()));
+        System.out.println("WeaponMorphRenderer: ItemInHandLayer added");
     }
 
     @Override

@@ -22,6 +22,9 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
@@ -48,6 +51,14 @@ import static com.xiaoshi2022.everything_morph.EverythingMorphMod.WEAPON_MORPH_E
 
 public class WeaponMorphEntity extends PathfinderMob {
     private static final org.slf4j.Logger LOGGER = LogUtils.getLogger();
+
+    // 实体数据同步器 - 用于同步 customName 到客户端
+    private static final EntityDataAccessor<String> DATA_CUSTOM_NAME = 
+            SynchedEntityData.defineId(WeaponMorphEntity.class, EntityDataSerializers.STRING);
+    
+    // 实体数据同步器 - 用于同步物品ID到客户端（用于渲染手持物品）
+    private static final EntityDataAccessor<String> DATA_ITEM_ID = 
+            SynchedEntityData.defineId(WeaponMorphEntity.class, EntityDataSerializers.STRING);
 
     private Player owner;
     private ResourceLocation skinTexture;
@@ -94,6 +105,10 @@ public class WeaponMorphEntity extends PathfinderMob {
         this.customName = customName != null && !customName.isEmpty() ? customName : "Unnamed";
         LOGGER.info("构造函数设置 customName = '{}'", this.customName); // 添加日志
         this.skinUUID = UUID.nameUUIDFromBytes(this.customName.getBytes(StandardCharsets.UTF_8));
+        // 同步到 entityData（只在服务端）
+        if (!level.isClientSide) {
+            this.entityData.set(DATA_CUSTOM_NAME, this.customName);
+        }
     }
 
     public ResourceLocation getSkinTexture() {
@@ -397,6 +412,13 @@ public class WeaponMorphEntity extends PathfinderMob {
             this.blockCount = item.getCount();
         }
         applyItemStats(item);
+        
+        // 同步物品ID到客户端（用于渲染手持物品）
+        if (!this.level().isClientSide && !item.isEmpty()) {
+            String itemId = getRegistryName(item.getItem());
+            this.entityData.set(DATA_ITEM_ID, itemId);
+            System.out.println("同步物品ID到客户端: " + itemId);
+        }
     }
 
     public ItemStack getOriginalItem() {
@@ -413,8 +435,13 @@ public class WeaponMorphEntity extends PathfinderMob {
 
     @Override
     public void addAdditionalSaveData(CompoundTag compound) {
+        // 保存我们的 customName 到 NBT（使用不同的 key 避免与父类冲突）
+        if (customName != null && !customName.isEmpty()) {
+            compound.putString("MorphCustomName", customName);
+        }
+        
         super.addAdditionalSaveData(compound);
-        compound.putString("CustomName", customName);
+        
         compound.putInt("BlockCount", blockCount);
         compound.put("OriginalItem", originalItem.save(new CompoundTag()));
         compound.putUUID("SkinUUID", skinUUID);
@@ -431,15 +458,34 @@ public class WeaponMorphEntity extends PathfinderMob {
 
     @Override
     public void readAdditionalSaveData(CompoundTag compound) {
+        // 先读取我们自己的 CustomName（在调用 super 之前）
+        // 优先使用新的 key "MorphCustomName"，如果不存在则尝试旧的 "CustomName"
+        String savedCustomName = null;
+        if (compound.contains("MorphCustomName")) {
+            savedCustomName = compound.getString("MorphCustomName");
+            LOGGER.info("从 NBT 预读取 MorphCustomName: '{}'", savedCustomName);
+        } else if (compound.contains("CustomName")) {
+            // 向后兼容：读取旧的 key
+            savedCustomName = compound.getString("CustomName");
+            LOGGER.info("从 NBT 预读取旧版 CustomName: '{}'", savedCustomName);
+        }
+
         super.readAdditionalSaveData(compound);
 
         LOGGER.info("readAdditionalSaveData 开始");
         LOGGER.info("当前 customName = '{}'", this.customName);
 
-        if (compound.contains("CustomName")) {
+        // 使用我们保存的 CustomName（优先）
+        if (savedCustomName != null && !savedCustomName.isEmpty()) {
             String oldName = this.customName;
-            this.customName = compound.getString("CustomName");
+            this.customName = savedCustomName;
             LOGGER.info("从 NBT 读取 CustomName: '{}' (之前是 '{}')", this.customName, oldName);
+            // 同时设置实体的显示名称，确保同步
+            super.setCustomName(Component.literal(this.customName));
+            // 同步到 entityData（只在服务端）
+            if (!this.level().isClientSide) {
+                this.entityData.set(DATA_CUSTOM_NAME, this.customName);
+            }
         } else {
             LOGGER.info("NBT 中没有 CustomName，保持当前值: '{}'", this.customName);
         }
@@ -462,8 +508,13 @@ public class WeaponMorphEntity extends PathfinderMob {
         }
 
         if (this.level().isClientSide) {
+            // 客户端：重置皮肤加载状态，但保留 customName
             this.skinLoadState = SkinLoadState.NOT_LOADED;
             this.skinLoadedFromUUID = false;
+            // 确保 skinUUID 正确设置
+            if (this.customName != null && !this.customName.isEmpty()) {
+                this.skinUUID = UUID.nameUUIDFromBytes(this.customName.getBytes(StandardCharsets.UTF_8));
+            }
         } else {
             if (compound.contains("SkinTexture")) {
                 String texturePath = compound.getString("SkinTexture");
@@ -473,6 +524,13 @@ public class WeaponMorphEntity extends PathfinderMob {
                 this.skinLoadState = SkinLoadState.values()[compound.getInt("SkinLoadState")];
             }
         }
+    }
+
+    @Override
+    protected void defineSynchedData() {
+        super.defineSynchedData();
+        this.entityData.define(DATA_CUSTOM_NAME, "");
+        this.entityData.define(DATA_ITEM_ID, "");
     }
 
     @Override
@@ -556,8 +614,32 @@ public class WeaponMorphEntity extends PathfinderMob {
         }
 
         if (this.level().isClientSide) {
+            // 从 entityData 同步 customName（用于客户端从服务端接收同步）
+            String syncedName = this.entityData.get(DATA_CUSTOM_NAME);
+            if (syncedName != null && !syncedName.isEmpty() && !syncedName.equals(this.customName)) {
+                LOGGER.info("客户端从 entityData 同步 customName: '{}' -> '{}'", this.customName, syncedName);
+                this.customName = syncedName;
+                this.skinUUID = UUID.nameUUIDFromBytes(this.customName.getBytes(StandardCharsets.UTF_8));
+            }
+            
             if (skinLoadState == SkinLoadState.NOT_LOADED && !skinLoadedFromUUID) {
                 loadSkinFromResourcePack();
+            }
+            
+            // 调试：输出物品ID同步状态
+            String itemId = this.entityData.get(DATA_ITEM_ID);
+            if (itemId != null && !itemId.isEmpty()) {
+                System.out.println("tick() - 客户端 itemId: '" + itemId + "'");
+            }
+        } else {
+            // 服务端：确保物品ID已同步到 entityData
+            String currentItemId = this.entityData.get(DATA_ITEM_ID);
+            if (!originalItem.isEmpty()) {
+                String expectedItemId = getRegistryName(originalItem.getItem());
+                if (!expectedItemId.equals(currentItemId)) {
+                    System.out.println("服务端同步物品ID到 entityData: '" + expectedItemId + "'");
+                    this.entityData.set(DATA_ITEM_ID, expectedItemId);
+                }
             }
         }
     }
@@ -661,8 +743,29 @@ public class WeaponMorphEntity extends PathfinderMob {
 
     @Override
     public ItemStack getMainHandItem() {
-        // 手持原始物品
-        return this.originalItem;
+        // 如果在服务端，直接返回 originalItem
+        if (!this.level().isClientSide) {
+            return this.originalItem;
+        }
+        
+        // 如果在客户端，从 entityData 获取物品ID并创建物品
+        String itemId = this.entityData.get(DATA_ITEM_ID);
+        System.out.println("客户端 getMainHandItem - itemId from entityData: '" + itemId + "'");
+        if (itemId != null && !itemId.isEmpty() && !"default".equals(itemId)) {
+            try {
+                net.minecraft.resources.ResourceLocation location = new net.minecraft.resources.ResourceLocation("minecraft", itemId);
+                System.out.println("客户端尝试获取物品: " + location);
+                net.minecraft.world.item.Item item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(location);
+                System.out.println("获取到的物品: " + item);
+                if (item != null) {
+                    return new ItemStack(item);
+                }
+            } catch (Exception e) {
+                System.out.println("获取物品时出错: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+        return ItemStack.EMPTY;
     }
 
     @Override
