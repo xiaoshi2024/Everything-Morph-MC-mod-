@@ -417,7 +417,6 @@ public class WeaponMorphEntity extends PathfinderMob {
         if (!this.level().isClientSide && !item.isEmpty()) {
             String itemId = getRegistryName(item.getItem());
             this.entityData.set(DATA_ITEM_ID, itemId);
-            System.out.println("同步物品ID到客户端: " + itemId);
         }
     }
 
@@ -625,19 +624,12 @@ public class WeaponMorphEntity extends PathfinderMob {
             if (skinLoadState == SkinLoadState.NOT_LOADED && !skinLoadedFromUUID) {
                 loadSkinFromResourcePack();
             }
-            
-            // 调试：输出物品ID同步状态
-            String itemId = this.entityData.get(DATA_ITEM_ID);
-            if (itemId != null && !itemId.isEmpty()) {
-                System.out.println("tick() - 客户端 itemId: '" + itemId + "'");
-            }
         } else {
             // 服务端：确保物品ID已同步到 entityData
             String currentItemId = this.entityData.get(DATA_ITEM_ID);
             if (!originalItem.isEmpty()) {
                 String expectedItemId = getRegistryName(originalItem.getItem());
                 if (!expectedItemId.equals(currentItemId)) {
-                    System.out.println("服务端同步物品ID到 entityData: '" + expectedItemId + "'");
                     this.entityData.set(DATA_ITEM_ID, expectedItemId);
                 }
             }
@@ -750,19 +742,15 @@ public class WeaponMorphEntity extends PathfinderMob {
         
         // 如果在客户端，从 entityData 获取物品ID并创建物品
         String itemId = this.entityData.get(DATA_ITEM_ID);
-        System.out.println("客户端 getMainHandItem - itemId from entityData: '" + itemId + "'");
         if (itemId != null && !itemId.isEmpty() && !"default".equals(itemId)) {
             try {
                 net.minecraft.resources.ResourceLocation location = new net.minecraft.resources.ResourceLocation("minecraft", itemId);
-                System.out.println("客户端尝试获取物品: " + location);
                 net.minecraft.world.item.Item item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(location);
-                System.out.println("获取到的物品: " + item);
                 if (item != null) {
                     return new ItemStack(item);
                 }
             } catch (Exception e) {
-                System.out.println("获取物品时出错: " + e.getMessage());
-                e.printStackTrace();
+                // 忽略错误
             }
         }
         return ItemStack.EMPTY;
