@@ -5,10 +5,12 @@ import com.xiaoshi2022.everything_morph.Enchantment.FlySwordEnchantment;
 import com.xiaoshi2022.everything_morph.Enchantment.MorphEnchantment;
 import com.xiaoshi2022.everything_morph.Network.NetworkHandler;
 import com.xiaoshi2022.everything_morph.Renderer.FlyingSwordRenderer;
+import com.xiaoshi2022.everything_morph.Renderer.SmartFlyingSwordRenderer;
 import com.xiaoshi2022.everything_morph.Renderer.WeaponMorphModel;
 import com.xiaoshi2022.everything_morph.Renderer.WeaponMorphRenderer;
 import com.xiaoshi2022.everything_morph.client.FlySwordKeyBindings;
 import com.xiaoshi2022.everything_morph.entity.FlyingSwordEntity;
+import com.xiaoshi2022.everything_morph.entity.SmartFlyingSwordEntity;
 import com.xiaoshi2022.everything_morph.entity.WeaponMorphEntity;
 import net.minecraft.client.model.geom.builders.CubeDeformation;
 import net.minecraft.client.renderer.entity.EntityRenderers;
@@ -88,6 +90,16 @@ public class EverythingMorphMod
                             .setShouldReceiveVelocityUpdates(true)
                             .build("flying_sword_entity"));
 
+    // 智能飞行剑实体注册
+    public static final RegistryObject<EntityType<SmartFlyingSwordEntity>> SMART_FLYING_SWORD_ENTITY = 
+            ENTITIES.register("smart_flying_sword_entity",
+                    () -> EntityType.Builder.of(SmartFlyingSwordEntity::new, MobCategory.CREATURE)
+                            .sized(0.6F, 0.6F)
+                            .setTrackingRange(80)
+                            .setUpdateInterval(3)
+                            .setShouldReceiveVelocityUpdates(true)
+                            .build("smart_flying_sword_entity"));
+
     // Directly reference a slf4j logger
     public static final Logger LOGGER = LogUtils.getLogger();
 
@@ -162,6 +174,7 @@ public class EverythingMorphMod
     private void onEntityAttributeCreation(EntityAttributeCreationEvent event) {
         event.put(WEAPON_MORPH_ENTITY.get(), WeaponMorphEntity.createAttributes().build());
         event.put(FLYING_SWORD_ENTITY.get(), FlyingSwordEntity.createAttributes().build());
+        event.put(SMART_FLYING_SWORD_ENTITY.get(), SmartFlyingSwordEntity.createAttributes().build());
     }
 
     // 添加化形附魔书到现有的创造模式标签页（如战斗标签页）
@@ -275,6 +288,10 @@ public class EverythingMorphMod
                 // 注册飞行剑实体渲染器
                 EntityRenderers.register(EverythingMorphMod.FLYING_SWORD_ENTITY.get(),
                         FlyingSwordRenderer::new);
+                
+                // 注册智能飞行剑实体渲染器
+                EntityRenderers.register(EverythingMorphMod.SMART_FLYING_SWORD_ENTITY.get(),
+                        SmartFlyingSwordRenderer::new);
 
                 // 注册键位绑定
                 FlySwordKeyBindings.init();
