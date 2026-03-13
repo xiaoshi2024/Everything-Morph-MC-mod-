@@ -11,14 +11,13 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
 
-@OnlyIn(Dist.CLIENT)  // 关键：标记整个类为只在客户端可用
+@OnlyIn(Dist.CLIENT)
 @Mod.EventBusSubscriber(modid = "everything_morph", value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
 public class FlySwordKeyBindings {
     public static KeyMapping flySwordDown;
-    public static KeyMapping flySwordAttack;
+    public static KeyMapping summonMorph;
 
     public static void init() {
-        // 向下飞行键位设置
         flySwordDown = new KeyMapping(
                 "key.everything_morph.fly_sword_down",
                 KeyConflictContext.IN_GAME,
@@ -28,13 +27,12 @@ public class FlySwordKeyBindings {
                 "key.categories.everything_morph"
         );
 
-        // 攻击键位设置
-        flySwordAttack = new KeyMapping(
-                "key.everything_morph.fly_sword_attack",
+        summonMorph = new KeyMapping(
+                "key.everything_morph.summon_morph",
                 KeyConflictContext.IN_GAME,
                 KeyModifier.NONE,
                 InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_R,
+                GLFW.GLFW_KEY_Z,
                 "key.categories.everything_morph"
         );
     }
@@ -43,6 +41,6 @@ public class FlySwordKeyBindings {
     public static void registerKeyBindings(RegisterKeyMappingsEvent event) {
         init();
         event.register(flySwordDown);
-        event.register(flySwordAttack);
+        event.register(summonMorph);
     }
 }

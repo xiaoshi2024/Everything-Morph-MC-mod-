@@ -5,6 +5,7 @@
   "enchantment.everything_morph.fly_sword.desc": "使用すると、乗って移動できる飛翔剣を召喚します。",
   "key.everything_morph.fly_sword_down": "下降",
   "key.everything_morph.fly_sword_attack": "剣のビームを発射",
+  "key.everything_morph.summon_morph": "変身召喚",
   "key.categories.everything_morph": "Everything Morph",
   "itemGroup.everything_morph.morph_tab": "万物化形",
   "config.everything_morph.enable_skin_cache": "スキンキャッシュを有効化",
